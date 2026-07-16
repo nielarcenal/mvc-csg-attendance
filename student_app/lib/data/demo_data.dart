@@ -106,6 +106,37 @@ List<EventItem> upcomingEvents = const [
   ),
 ];
 
+/// One event on the calendar, with the student's own status for it.
+enum CalStatus { attended, absent, excused, upcoming, optionalPast }
+
+class CalendarEvent {
+  const CalendarEvent({
+    this.id,
+    required this.name,
+    required this.line,
+    required this.date,
+    required this.status,
+  });
+
+  final String? id;
+  final String name;
+  final String line;
+  final DateTime date;
+  final CalStatus status;
+}
+
+List<CalendarEvent> calendarEvents = [
+  CalendarEvent(
+      name: 'Community Cleanup', line: 'Jul 8 · 6:00 AM · Campus grounds',
+      date: DateTime(2026, 7, 8), status: CalStatus.absent),
+  CalendarEvent(
+      name: 'SG General Assembly', line: 'Today · 7:00 AM · MVC Gym',
+      date: DateTime(2026, 7, 15), status: CalStatus.attended),
+  CalendarEvent(
+      name: 'Acquaintance Party', line: 'Fri Jul 24 · 6:00 PM · Covered Court',
+      date: DateTime(2026, 7, 24), status: CalStatus.upcoming),
+];
+
 class HistoryEntry {
   const HistoryEntry({
     required this.event,
@@ -145,12 +176,19 @@ List<HistoryEntry> historyEntries = const [
 ];
 
 class FineEntry {
-  const FineEntry({required this.event, required this.line, required this.chip, required this.tone});
+  const FineEntry({
+    required this.event,
+    required this.line,
+    required this.chip,
+    required this.tone,
+    this.amount = 50,
+  });
 
   final String event;
   final String line;
   final String chip;
-  final String tone; // red | blue | green
+  final String tone; // red (unpaid) | blue (waived) | green (paid)
+  final double amount;
 }
 
 List<FineEntry> fineEntries = const [
@@ -172,6 +210,38 @@ List<FineEntry> fineEntries = const [
     chip: '₱50 · paid',
     tone: 'green',
   ),
+];
+
+/// A previously filed excuse, shown at the bottom of the excuse form.
+class ExcuseRecord {
+  const ExcuseRecord({required this.event, required this.line, required this.status});
+
+  final String event;
+  final String line;
+  final String status; // pending | approved | rejected
+}
+
+List<ExcuseRecord> excuseRecords = const [
+  ExcuseRecord(
+      event: 'Sports Fest — Day 1',
+      line: 'Filed Jun 27 · reviewed by R. Uy',
+      status: 'approved'),
+];
+
+class Announcement {
+  const Announcement({required this.title, required this.body});
+
+  final String title;
+  final String body;
+}
+
+List<Announcement> announcements = const [
+  Announcement(
+      title: 'GA seating by course block',
+      body: 'Enter through your assigned gate. Gates open 6:30 AM. · 2h ago'),
+  Announcement(
+      title: 'Excuse letters now digital',
+      body: 'File excuses in-app with a photo — no more paper. · Mon'),
 ];
 
 enum NotificationKind { recorded, reminder, absent, announcement }

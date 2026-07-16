@@ -24,6 +24,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   void initState() {
     super.initState();
     _going = widget.event != null ? widget.event!.going : true;
+    if (repo.hasBackend) {
+      _headcount = 0;
+      repo.rsvpCount(widget.event?.id).then((n) {
+        if (mounted && n != null) setState(() => _headcount = n);
+      });
+    }
   }
 
   Future<void> _setGoing(bool going) async {

@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { PageHeader } from '../components/Shell';
 import { SCHOOLS } from '../data/mock';
+import { loadSettings, saveSetting, hasBackend } from '../data/api';
 
 const COURSE_CHIPS = [
   { label: 'BSIT', cls: 'chip blue' },
@@ -17,12 +19,54 @@ function AddChip() {
 }
 
 export default function Settings() {
+  const [fine, setFine] = useState('50.00');
+  const [grace, setGrace] = useState('0');
+  const [deadline, setDeadline] = useState('3');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasBackend) return;
+    loadSettings().then((s) => {
+      if (!s) return;
+      const strip = (v?: string) => (v ?? '').replace(/^"|"$/g, '');
+      if (s.default_fine_amount) setFine(strip(s.default_fine_amount));
+      if (s.grace_period_minutes) setGrace(strip(s.grace_period_minutes));
+      if (s.excuse_deadline_days) setDeadline(strip(s.excuse_deadline_days));
+    });
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setNotice(null);
+    const errs = (await Promise.all([
+      saveSetting('default_fine_amount', fine),
+      saveSetting('grace_period_minutes', grace),
+      saveSetting('excuse_deadline_days', deadline),
+    ])).filter(Boolean);
+    setBusy(false);
+    setNotice(errs.length
+      ? `Save failed: ${errs[0]} (super-admin only)`
+      : 'Settings saved — grace period now applies to new scans.');
+  };
+
+  const numBox = {
+    width: 90, padding: '6px 12px', fontWeight: 800, fontSize: 12, textAlign: 'right',
+  } as const;
+
   return (
     <>
       <PageHeader
         title="Settings & master data"
         subtitle="Super-admin only — every change here is audited"
-        actions={<button className="pill-btn primary" style={{ padding: '9px 20px' }}>Save changes</button>}
+        actions={
+          <>
+            {notice && <span style={{ fontSize: 11, fontWeight: 700, color: notice.startsWith('Save failed') ? 'var(--danger-deep)' : 'var(--checker-deep)' }}>{notice}</span>}
+            <button className="pill-btn primary" style={{ padding: '9px 20px', opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
+        }
       />
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '2px 22px 18px', minHeight: 0, alignContent: 'start' }}>
         <div className="card" style={{ padding: '15px 18px' }}>
@@ -67,19 +111,27 @@ export default function Settings() {
         <div className="card" style={{ padding: '15px 18px' }}>
           <div className="card-title" style={{ marginBottom: 10 }}>Fines &amp; grace</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[
-              { title: 'Default fine — unexcused absence', sub: 'Events can override per-event', value: '₱ 50.00' },
-              { title: 'Grace period after window close', sub: 'Scans inside grace skip the review queue', value: '0 min' },
-              { title: 'Excuse filing deadline', sub: 'After the event ends', value: '3 days' },
-            ].map((row) => (
-              <div key={row.title} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{row.title}</div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)' }}>{row.sub}</div>
-                </div>
-                <span className="input-box" style={{ width: 'auto', padding: '6px 12px', fontWeight: 800, fontSize: 12 }}>{row.value}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>Default fine — unexcused absence (₱)</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)' }}>Events can override per-event</div>
               </div>
-            ))}
+              <input className="input-box" style={numBox} value={fine} onChange={(e) => setFine(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>Grace period after window close (min)</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)' }}>Scans inside grace skip the review queue</div>
+              </div>
+              <input className="input-box" style={numBox} value={grace} onChange={(e) => setGrace(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>Excuse filing deadline (days)</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)' }}>After the event ends</div>
+              </div>
+              <input className="input-box" style={numBox} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            </div>
           </div>
         </div>
 

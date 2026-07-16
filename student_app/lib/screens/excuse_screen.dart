@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../data/demo_data.dart';
 import '../data/live_repo.dart' as repo;
 import '../theme.dart';
@@ -19,9 +22,19 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
           : 'I was confined at the campus clinic due to fever. Attached is my medical certificate signed by the school nurse.');
   bool _submitted = false;
   bool _busy = false;
+  final List<({String name, Uint8List bytes})> _attachments = [];
 
   HistoryEntry? get _missed =>
       historyEntries.where((h) => h.status == AttendanceStatus.absent).firstOrNull;
+
+  Future<void> _pickPhoto() async {
+    final picked = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85);
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    setState(() => _attachments.add((name: picked.name, bytes: bytes)));
+  }
 
   Future<void> _submit() async {
     if (_busy || _submitted) return;
@@ -32,7 +45,16 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
       return;
     }
     setState(() => _busy = true);
-    final err = await repo.submitExcuse(null, _reason.text.trim());
+    String? err;
+    final urls = <String>[];
+    try {
+      for (final a in _attachments) {
+        urls.add(await repo.uploadExcuseAttachment(a.bytes, a.name));
+      }
+    } catch (e) {
+      err = 'Could not upload attachment: $e';
+    }
+    err ??= await repo.submitExcuse(null, _reason.text.trim(), attachmentUrls: urls);
     if (!mounted) return;
     setState(() { _busy = false; _submitted = err == null; });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -143,52 +165,59 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                       children: [
                         const SectionLabel('Attachment'),
                         const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: T.hairline, width: 1.5),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 44,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: T.hairline2,
+                        for (var i = 0; i < _attachments.length; i++) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: T.hairline, width: 1.5),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                ClipRRect(
                                   borderRadius: BorderRadius.circular(10),
+                                  child: Image.memory(_attachments[i].bytes,
+                                      width: 44, height: 44, fit: BoxFit.cover),
                                 ),
-                                alignment: Alignment.center,
-                                child: Text('MED\nCERT',
-                                    textAlign: TextAlign.center,
-                                    style: T.ui(7, weight: FontWeight.w600, color: T.muted)),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('med-cert-jul8.jpg', style: T.ui(12, weight: FontWeight.w700)),
-                                    Text('1.2 MB · uploaded', style: T.ui(10, color: T.text2)),
-                                  ],
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(_attachments[i].name,
+                                          style: T.ui(12, weight: FontWeight.w700),
+                                          overflow: TextOverflow.ellipsis),
+                                      Text(
+                                          '${(_attachments[i].bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB · ready to upload',
+                                          style: T.ui(10, color: T.text2)),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Text('✕', style: T.ui(12, weight: FontWeight.w700, color: T.dangerDeep)),
-                            ],
+                                GestureDetector(
+                                  onTap: () => setState(() => _attachments.removeAt(i)),
+                                  child: Text('✕',
+                                      style: T.ui(12, weight: FontWeight.w700, color: T.dangerDeep)),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFFCFD6D2), width: 1.5,
-                                style: BorderStyle.solid),
-                            borderRadius: BorderRadius.circular(12),
+                          const SizedBox(height: 8),
+                        ],
+                        GestureDetector(
+                          onTap: _pickPhoto,
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: const Color(0xFFCFD6D2), width: 1.5,
+                                  style: BorderStyle.solid),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                                _attachments.isEmpty ? '+ Add a photo' : '+ Add another photo',
+                                style: T.ui(11, weight: FontWeight.w700, color: T.text2)),
                           ),
-                          alignment: Alignment.center,
-                          child: Text('+ Add another photo',
-                              style: T.ui(11, weight: FontWeight.w700, color: T.text2)),
                         ),
                       ],
                     ),
@@ -206,24 +235,30 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                       _submitted ? 'Submitted ✓' : (_busy ? 'Submitting…' : 'Submit excuse'),
                       color: _submitted ? T.checker : T.accent,
                       onTap: _submit),
-                  const SizedBox(height: 12),
-                  CampusCard(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Sports Fest — Day 1', style: T.ui(12, weight: FontWeight.w700)),
-                            const SizedBox(height: 1),
-                            Text('Filed Jun 27 · reviewed by R. Uy', style: T.ui(10, color: T.text2)),
-                          ],
-                        ),
-                        StatusChip.green('Approved ✓'),
-                      ],
+                  for (final x in excuseRecords) ...[
+                    const SizedBox(height: 12),
+                    CampusCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(x.event, style: T.ui(12, weight: FontWeight.w700)),
+                              const SizedBox(height: 1),
+                              Text(x.line, style: T.ui(10, color: T.text2)),
+                            ],
+                          ),
+                          switch (x.status) {
+                            'approved' => StatusChip.green('Approved ✓'),
+                            'rejected' => StatusChip.red('Rejected'),
+                            _ => StatusChip.orange('Pending'),
+                          },
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

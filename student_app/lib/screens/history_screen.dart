@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/demo_data.dart';
 import 'excuse_screen.dart';
@@ -51,45 +52,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
                 children: [
-                  CampusCard(
-                    radius: 20,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 74,
-                          height: 74,
-                          child: CustomPaint(
-                            painter: _SemesterRing(.92),
-                            child: Center(
-                              child: Text('92%', style: T.display(17, color: T.checkerDeep)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('1st Semester, S.Y. 2026–27', style: T.ui(13, weight: FontWeight.w700)),
-                              const SizedBox(height: 2),
-                              Text('23 of 25 required events attended', style: T.ui(11, color: T.text2)),
-                              const SizedBox(height: 7),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 4,
-                                children: [
-                                  StatusChip.green('23 present', fontSize: 9.5),
-                                  StatusChip.orange('1 excused', fontSize: 9.5),
-                                  StatusChip.red('1 absent', fontSize: 9.5),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _summaryCard(),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -109,6 +72,67 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Semester summary: real counts in live mode, the design mock otherwise.
+  Widget _summaryCard() {
+    final int present, excused, absent;
+    final double fraction;
+    final String headline;
+    if (repo.hasBackend) {
+      present = historyEntries.where((e) => e.status == AttendanceStatus.present).length;
+      excused = historyEntries.where((e) => e.status == AttendanceStatus.excused).length;
+      absent = historyEntries.where((e) => e.status == AttendanceStatus.absent).length;
+      final required = present + excused + absent;
+      fraction = required == 0 ? 1 : (present + excused) / required;
+      headline = required == 0
+          ? 'No required events yet'
+          : '${present + excused} of $required required events attended';
+    } else {
+      present = 23; excused = 1; absent = 1;
+      fraction = .92;
+      headline = '23 of 25 required events attended';
+    }
+    final pct = (fraction * 100).round();
+    return CampusCard(
+      radius: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 74,
+            height: 74,
+            child: CustomPaint(
+              painter: _SemesterRing(fraction),
+              child: Center(
+                child: Text('$pct%', style: T.display(17, color: T.checkerDeep)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('1st Semester, S.Y. 2026–27', style: T.ui(13, weight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(headline, style: T.ui(11, color: T.text2)),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    StatusChip.green('$present present', fontSize: 9.5),
+                    StatusChip.orange('$excused excused', fontSize: 9.5),
+                    StatusChip.red('$absent absent', fontSize: 9.5),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

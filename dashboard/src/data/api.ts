@@ -344,6 +344,99 @@ export async function provisionAccount(input: ProvisionInput):
   return { temp_password: data?.temp_password };
 }
 
+// Account maintenance — all run through the edge function (service key
+// stays server-side).
+async function accountAction(body: Record<string, unknown>):
+  Promise<{ error?: string; temp_password?: string }> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.functions.invoke('provision-account', { body });
+  if (error) return { error: error.message };
+  if (data?.error) return { error: data.error };
+  return { temp_password: data?.temp_password };
+}
+
+export const resetPassword = (email: string) =>
+  accountAction({ action: 'reset_password', email });
+export const resendInvite = (email: string) =>
+  accountAction({ action: 'resend_invite', email });
+export const setAccountActive = (email: string, active: boolean) =>
+  accountAction({ action: 'set_active', email, active });
+
+// ── CSV roster import (spec: student_no, name, email, course, year, section)
+export interface CsvStudent {
+  student_no: string; full_name: string; email: string | null;
+  course: string | null; year_level: number | null; section: string | null;
+}
+
+export function parseStudentsCsv(text: string): { rows: CsvStudent[]; errors: string[] } {
+  const errors: string[] = [];
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], errors: ['empty file'] };
+  // Header row is optional; detect it by a non-numeric first field.
+  const first = lines[0].toLowerCase();
+  const hasHeader = first.includes('student') || first.includes('name');
+  const rows: CsvStudent[] = [];
+  for (const [i, line] of lines.slice(hasHeader ? 1 : 0).entries()) {
+    const cells = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+    if (cells.length < 2 || !cells[0]) {
+      errors.push(`line ${i + 1 + (hasHeader ? 1 : 0)}: needs at least student_no, name`);
+      continue;
+    }
+    rows.push({
+      student_no: cells[0],
+      full_name: cells[1],
+      email: cells[2] || null,
+      course: cells[3] || null,
+      year_level: cells[4] ? Number(cells[4]) || null : null,
+      section: cells[5] || null,
+    });
+  }
+  return { rows, errors };
+}
+
+export async function importStudents(rows: CsvStudent[]): Promise<string | null> {
+  if (!supabase) return null;
+  const { error } = await supabase.from('students')
+    .upsert(rows, { onConflict: 'student_no' });
+  return error ? error.message : null;
+}
+
+// ── close-out: fines for absentees without an approved excuse ───────
+export async function generateFines(eventId: string):
+  Promise<{ error?: string; count?: number }> {
+  if (!supabase) return { count: 0 };
+  const { data, error } = await supabase.rpc('generate_fines', { p_event: eventId });
+  if (error) return { error: error.message };
+  return { count: data as number };
+}
+
+// ── settings (master data, super-admin) ─────────────────────────────
+export async function loadSettings(): Promise<Record<string, string> | null> {
+  if (!supabase) return null;
+  const { data } = await supabase.from('settings').select('key, value');
+  if (!data) return null;
+  return Object.fromEntries((data as any[]).map((r) => [r.key, JSON.stringify(r.value)]));
+}
+
+export async function saveSetting(key: string, value: unknown): Promise<string | null> {
+  if (!supabase) return null;
+  const { error } = await supabase.from('settings')
+    .upsert({ key, value }, { onConflict: 'key' });
+  return error ? error.message : null;
+}
+
+// ── CSV download helper ─────────────────────────────────────────────
+export function downloadCsv(filename: string, headers: string[], rows: string[][]) {
+  const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const csv = [headers, ...rows].map((r) => r.map(esc).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // ── audit log ───────────────────────────────────────────────────────
 export async function loadAudit(): Promise<AuditRow[] | null> {
   if (!supabase) return null;
@@ -387,7 +480,7 @@ export async function loadQrCards(): Promise<QrCard[] | null> {
   if (!supabase) return null;
   const { data } = await supabase.from('students')
     .select('full_name, student_no, course, year_level, section, qr_token')
-    .eq('active', true).order('full_name').limit(24);
+    .eq('active', true).order('full_name').limit(1000);
   if (!data) return null;
   return Promise.all((data as any[]).map(async (s) => ({
     qr: await QRCode.toDataURL(s.qr_token, { margin: 0, width: 240, color: { dark: '#232a31' } }),

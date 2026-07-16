@@ -6,6 +6,8 @@
 /// Without the defines the app stays in demo mode (demo_data.dart).
 library;
 
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'demo_data.dart';
 
@@ -111,11 +113,25 @@ Future<void> refreshAll() async {
       : List<Map<String, dynamic>>.from(await _db
           .from('excuses')
           .select('event_id, status, filed_at')
-          .eq('student_id', studentId));
+          .eq('student_id', studentId)
+          .order('filed_at', ascending: false));
+  final annRows = List<Map<String, dynamic>>.from(await _db
+      .from('announcements')
+      .select('title, body, created_at')
+      .order('created_at', ascending: false)
+      .limit(5));
 
   final now = DateTime.now();
   final byId = {for (final e in events) e['id'] as String: e};
   DateTime ts(Map e, String k) => DateTime.parse(e[k] as String).toLocal();
+
+  // Announcements for the Home screen.
+  announcements = annRows
+      .map((a) => Announcement(
+            title: a['title'] as String,
+            body: '${a['body']} · ${_date(DateTime.parse(a['created_at'] as String))}',
+          ))
+      .toList();
 
   // Upcoming = events that haven't ended yet.
   final upcoming = events.where((e) => ts(e, 'ends_at').isAfter(now)).toList();
@@ -209,11 +225,39 @@ Future<void> refreshAll() async {
     );
   }).toList();
 
+  // Calendar: every event with this student's own status.
+  calendarEvents = events.map((e) {
+    final starts = ts(e, 'starts_at');
+    final id = e['id'];
+    final CalStatus status;
+    if (ts(e, 'ends_at').isAfter(now)) {
+      status = CalStatus.upcoming;
+    } else if (scans.any((s) =>
+        s['event_id'] == id && s['scan_type'] == 'in' &&
+        (s['status'] == 'valid' || s['status'] == 'approved'))) {
+      status = CalStatus.attended;
+    } else if (myExcuses.any((x) => x['event_id'] == id && x['status'] == 'approved')) {
+      status = CalStatus.excused;
+    } else if (e['is_required'] as bool) {
+      status = CalStatus.absent;
+    } else {
+      status = CalStatus.optionalPast;
+    }
+    return CalendarEvent(
+      id: id as String,
+      name: e['name'] as String,
+      line: '${_date(starts)} · ${_time(starts)} · ${e['venue'] ?? ''}',
+      date: DateTime(starts.year, starts.month, starts.day),
+      status: status,
+    );
+  }).toList();
+
   fineEntries = myFines.reversed.map((f) {
     final e = byId[f['event_id']];
     final status = f['status'] as String;
     final when = e == null ? '' : _date(ts(e, 'starts_at'));
-    final amount = '₱${(f['amount'] as num).toStringAsFixed(0)}';
+    final amountNum = (f['amount'] as num).toDouble();
+    final amount = '₱${amountNum.toStringAsFixed(0)}';
     switch (status) {
       case 'paid':
         return FineEntry(
@@ -221,6 +265,7 @@ Future<void> refreshAll() async {
           line: '$when · paid at SG office${f['or_number'] != null ? ' · OR #${f['or_number']}' : ''}',
           chip: '$amount · paid',
           tone: 'green',
+          amount: amountNum,
         );
       case 'waived':
         return FineEntry(
@@ -228,6 +273,7 @@ Future<void> refreshAll() async {
           line: '$when · excuse approved → fine waived',
           chip: '$amount · waived',
           tone: 'blue',
+          amount: amountNum,
         );
       default:
         final pending = myExcuses.any(
@@ -237,8 +283,18 @@ Future<void> refreshAll() async {
           line: '$when · unexcused absence${pending ? ' · excuse pending review' : ''}',
           chip: '$amount · unpaid',
           tone: 'red',
+          amount: amountNum,
         );
     }
+  }).toList();
+
+  excuseRecords = myExcuses.map((x) {
+    final e = byId[x['event_id']];
+    return ExcuseRecord(
+      event: (e?['name'] ?? 'Event') as String,
+      line: 'Filed ${_date(DateTime.parse(x['filed_at'] as String))}',
+      status: x['status'] as String,
+    );
   }).toList();
 
   // Notifications synthesized from my records (push comes later via FCM).
@@ -298,7 +354,31 @@ Future<String?> setRsvp(String? eventId, bool going) async {
   }
 }
 
-Future<String?> submitExcuse(String? eventId, String reason) async {
+/// Live headcount for the RSVP block on the event detail screen.
+Future<int?> rsvpCount(String? eventId) async {
+  if (!hasBackend || eventId == null) return null;
+  try {
+    final rows = await _db
+        .from('event_rsvps')
+        .select('student_id')
+        .eq('event_id', eventId)
+        .eq('going', true);
+    return (rows as List).length;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Uploads one excuse attachment; returns its storage path.
+Future<String> uploadExcuseAttachment(Uint8List bytes, String filename) async {
+  final uid = _db.auth.currentUser!.id;
+  final path = '$uid/${DateTime.now().millisecondsSinceEpoch}-$filename';
+  await _db.storage.from('excuse-attachments').uploadBinary(path, bytes);
+  return path;
+}
+
+Future<String?> submitExcuse(String? eventId, String reason,
+    {List<String> attachmentUrls = const []}) async {
   if (!hasBackend) return null;
   try {
     final student = await _db
@@ -325,6 +405,7 @@ Future<String?> submitExcuse(String? eventId, String reason) async {
       'student_id': student['id'],
       'event_id': targetEvent,
       'reason': reason,
+      'attachment_urls': attachmentUrls,
     });
     await refreshAll();
     return null;

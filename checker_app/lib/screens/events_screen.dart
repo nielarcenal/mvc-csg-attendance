@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import '../data/live_repo.dart' as repo;
 import '../data/scan_store.dart';
+import 'login_screen.dart';
 import 'scan_screen.dart';
 import 'sync_screen.dart';
 
@@ -95,11 +96,31 @@ class _EventsScreenState extends State<EventsScreen> {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                      repo.hasBackend
-                          ? 'Signed in as ${repo.checkerName} · Checker'
-                          : 'Signed in as J. Ramos · Checker',
-                      style: T.ui(11.5, color: Colors.white.withOpacity(.9))),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                            repo.hasBackend
+                                ? 'Signed in as ${repo.checkerName} · Checker'
+                                : 'Signed in as J. Ramos · Checker',
+                            style: T.ui(11.5, color: Colors.white.withOpacity(.9))),
+                      ),
+                      GestureDetector(
+                        onTap: () async {
+                          await repo.signOut();
+                          if (!context.mounted) return;
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(builder: (_) => const LoginScreen()),
+                            (_) => false,
+                          );
+                        },
+                        child: Text('Sign out',
+                            style: T.ui(10.5,
+                                weight: FontWeight.w700,
+                                color: Colors.white.withOpacity(.8))),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),

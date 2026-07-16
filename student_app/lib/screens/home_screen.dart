@@ -181,22 +181,23 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 9),
                 ],
-                const SizedBox(height: 5),
-                // Announcements
-                Text('Announcements', style: T.display(15)),
-                const SizedBox(height: 9),
-                CampusCard(
-                  padding: EdgeInsets.zero,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _announcement('GA seating by course block',
-                          'Enter through your assigned gate. Gates open 6:30 AM. · 2h ago', divider: true),
-                      _announcement('Excuse letters now digital',
-                          'File excuses in-app with a photo — no more paper. · Mon'),
-                    ],
+                if (announcements.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  // Announcements
+                  Text('Announcements', style: T.display(15)),
+                  const SizedBox(height: 9),
+                  CampusCard(
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < announcements.length; i++)
+                          _announcement(announcements[i].title, announcements[i].body,
+                              divider: i < announcements.length - 1),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

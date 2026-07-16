@@ -142,7 +142,10 @@ class _ManualLookupScreenState extends State<ManualLookupScreen> {
 
   Widget _resultCard(RosterEntry r) {
     final expanded = _expanded == r.name;
-    final inTime = _recorded[r.name];
+    final alreadyIn = repo.hasBackend &&
+        widget.session != null &&
+        widget.session!.hasScanned(r.id, timeInType: widget.session!.timeIn);
+    final inTime = _recorded[r.name] ?? (alreadyIn ? '✓' : null);
     final highlight = _query.text.trim().toLowerCase();
 
     return CampusCard(
@@ -171,7 +174,7 @@ class _ManualLookupScreenState extends State<ManualLookupScreen> {
                 ),
               ),
               if (inTime != null)
-                StatusChip.green('In · $inTime', fontSize: 9.5)
+                StatusChip.green(inTime == '✓' ? 'Already in ✓' : 'In · $inTime', fontSize: 9.5)
               else
                 StatusChip.orange('No scan yet', fontSize: 9.5),
             ],

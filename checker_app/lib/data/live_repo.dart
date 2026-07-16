@@ -24,6 +24,30 @@ Future<void> initSupabase() async {
 
 String checkerName = 'Joel Ramos';
 
+bool get isSignedIn => !hasBackend || client.auth.currentSession != null;
+
+Future<void> signOut() async {
+  if (hasBackend) await client.auth.signOut();
+}
+
+/// Reloads profile + roster for a persisted session. Returns false when the
+/// stored session belongs to a non-checker account.
+Future<bool> restoreSession() async {
+  final uid = client.auth.currentUser?.id;
+  if (uid == null) return false;
+  final profile =
+      await client.from('profiles').select('full_name, role').eq('id', uid).single();
+  if (profile['role'] != 'checker' &&
+      profile['role'] != 'event_maker' &&
+      profile['role'] != 'super_admin') {
+    await client.auth.signOut();
+    return false;
+  }
+  checkerName = profile['full_name'] as String;
+  await refreshRoster();
+  return true;
+}
+
 /// Returns an error message, or null on success.
 Future<String?> signIn(String email, String password) async {
   if (!hasBackend) return null;

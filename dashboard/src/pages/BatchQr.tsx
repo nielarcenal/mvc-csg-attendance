@@ -21,12 +21,44 @@ export default function BatchQr() {
   const pages = hasBackend ? Math.max(1, Math.ceil(cards.length / 4)) : 58;
   const visible = hasBackend ? cards.slice((page - 1) * 4, page * 4) : cards;
 
+  // Opens a print-ready window with every card — the browser's print
+  // dialog saves it as the PDF.
+  const printCards = () => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const border = cutGuides ? '1px dashed #cfd6d2' : '1px solid transparent';
+    const photo = photoBox
+      ? '<div style="width:40px;height:48px;margin-left:auto;border:1px dashed #cfd6d2;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font-size:6.5px;color:#9aa4ad">1×1</div>'
+      : '';
+    const cardHtml = cards.map((c) => `
+      <div style="border:${border};border-radius:8px;overflow:hidden;break-inside:avoid">
+        <div style="background:#3f9bd8;color:#fff;display:flex;align-items:center;gap:6px;padding:6px 9px">
+          <span style="font-size:7px;font-weight:800;letter-spacing:.08em">MVC CENTRAL STUDENT GOVERNMENT</span>
+        </div>
+        <div style="display:flex;gap:9px;padding:9px;align-items:center">
+          <img src="${c.qr}" style="width:78px;height:78px;image-rendering:pixelated;flex:none" />
+          <div style="min-width:0">
+            <div style="font-size:10.5px;font-weight:800;line-height:1.2;white-space:pre-line">${c.name}</div>
+            <div style="font-size:8.5px;color:#2b6da0;font-weight:700;margin-top:3px">${c.no}</div>
+            <div style="font-size:8px;color:#6b7580;margin-top:1px">${c.course}</div>
+          </div>
+          ${photo}
+        </div>
+      </div>`).join('');
+    w.document.write(`<!doctype html><html><head><title>CSG QR ID cards</title>
+      <style>body{font-family:system-ui,sans-serif;margin:14mm}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}</style>
+      </head><body><div class="grid">${cardHtml}</div>
+      <script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`);
+    w.document.close();
+  };
+
   return (
     <>
       <PageHeader
         crumb={<>Reports / <span style={{ color: 'var(--maker-deep)' }}>Printable QR IDs</span></>}
         title="Batch QR ID cards"
-        actions={<button className="pill-btn primary" style={{ padding: '10px 22px', fontSize: 12.5 }}>Generate PDF · {total} cards</button>}
+        actions={<button className="pill-btn primary" style={{ padding: '10px 22px', fontSize: 12.5 }} onClick={printCards}>Generate PDF · {total} cards</button>}
       />
       <div style={{ flex: 1, display: 'flex', gap: 14, padding: '2px 22px 18px', minHeight: 0 }}>
         <div style={{ width: 330, flex: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>

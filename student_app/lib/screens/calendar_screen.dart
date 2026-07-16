@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../data/demo_data.dart';
 import '../theme.dart';
 import 'event_detail_screen.dart';
 
-/// 6a — Calendar: month grid with event dots (green = attended,
+/// 6a — Calendar: real month grid with event dots (green = attended,
 /// blue = upcoming, red = absent; today = filled blue circle) + event rows.
+/// Navigable across months; data comes from [calendarEvents].
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
 
@@ -13,13 +15,58 @@ class CalendarScreen extends StatefulWidget {
 
 class _CalendarScreenState extends State<CalendarScreen> {
   bool _monthView = true;
+  late DateTime _month; // first day of the visible month
 
-  // July 2026: Jul 1 is a Wednesday; grid starts Sun Jun 28.
-  static const _dots = {8: T.danger, 15: T.checker, 24: T.student};
-  static const _today = 15;
+  static const _monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _month = DateTime(now.year, now.month);
+  }
+
+  Color _dotColor(CalStatus s) => switch (s) {
+        CalStatus.attended => T.checker,
+        CalStatus.excused => T.student,
+        CalStatus.absent => T.danger,
+        CalStatus.upcoming => T.student,
+        CalStatus.optionalPast => T.muted,
+      };
+
+  Widget _chip(CalStatus s) => switch (s) {
+        CalStatus.attended => StatusChip.green('Present ✓'),
+        CalStatus.excused => StatusChip.blue('Excused'),
+        CalStatus.absent => StatusChip.red('Absent'),
+        CalStatus.upcoming => const OutlineChip('Upcoming'),
+        CalStatus.optionalPast => const OutlineChip('Optional'),
+      };
+
+  List<CalendarEvent> get _monthEvents => calendarEvents
+      .where((e) => e.date.year == _month.year && e.date.month == _month.month)
+      .toList()
+    ..sort((a, b) => a.date.compareTo(b.date));
+
+  void _openEvent(CalendarEvent e) {
+    if (e.status != CalStatus.upcoming) return;
+    final item = upcomingEvents.where((u) => u.id != null && u.id == e.id).toList();
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => EventDetailScreen(event: item.isEmpty ? null : item.first),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
+    // List view shows everything, newest month first; month view shows
+    // the visible month only.
+    final listEvents = _monthView
+        ? _monthEvents
+        : (List<CalendarEvent>.from(calendarEvents)
+          ..sort((a, b) => b.date.compareTo(a.date)));
+
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -62,9 +109,24 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('‹', style: T.ui(13, weight: FontWeight.w700, color: T.muted)),
-                            Text('July 2026', style: T.display(14)),
-                            Text('›', style: T.ui(13, weight: FontWeight.w700, color: T.muted)),
+                            GestureDetector(
+                              onTap: () => setState(
+                                  () => _month = DateTime(_month.year, _month.month - 1)),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                child: Text('‹', style: T.ui(15, weight: FontWeight.w700, color: T.text2)),
+                              ),
+                            ),
+                            Text('${_monthNames[_month.month - 1]} ${_month.year}',
+                                style: T.display(14)),
+                            GestureDetector(
+                              onTap: () => setState(
+                                  () => _month = DateTime(_month.year, _month.month + 1)),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                child: Text('›', style: T.ui(15, weight: FontWeight.w700, color: T.text2)),
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 11),
@@ -85,19 +147,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                _eventRow('SG General Assembly', 'Today · 7:00 AM · MVC Gym', T.checker,
-                    StatusChip.green('Present ✓')),
-                const SizedBox(height: 9),
-                _eventRow('Acquaintance Party', 'Fri Jul 24 · 6:00 PM · Covered Court', T.student,
-                    const OutlineChip('RSVP'),
-                    onTap: () => Navigator.of(context)
-                        .push(MaterialPageRoute(builder: (_) => const EventDetailScreen()))),
-                const SizedBox(height: 9),
-                Opacity(
-                  opacity: .8,
-                  child: _eventRow('Community Cleanup', 'Jul 8 · 6:00 AM · Campus grounds', T.danger,
-                      StatusChip.red('Absent')),
-                ),
+                for (final e in listEvents) ...[
+                  Opacity(
+                    opacity: e.status == CalStatus.absent ? .85 : 1,
+                    child: _eventRow(e),
+                  ),
+                  const SizedBox(height: 9),
+                ],
+                if (listEvents.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 26),
+                    child: Center(
+                      child: Text('No events this month',
+                          style: T.ui(11.5, color: T.muted)),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -122,19 +186,36 @@ class _CalendarScreenState extends State<CalendarScreen> {
       );
 
   List<Widget> _weeks() {
-    // Jul 1, 2026 is a Wednesday: lead-in Jun 28–30, spill-over Aug 1.
-    final cells = <(int, bool)>[
-      for (var d = 28; d <= 30; d++) (d, true),
-      for (var d = 1; d <= 31; d++) (d, false),
-      (1, true),
-    ];
+    final first = DateTime(_month.year, _month.month, 1);
+    final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
+    final leadIn = first.weekday % 7; // Sunday-start grid
+    final totalCells = ((leadIn + daysInMonth) + 6) ~/ 7 * 7;
+
+    // Event dots for the visible month, keyed by day. When several events
+    // land on the same day, the "worst" status wins (absent > upcoming > …).
+    final dots = <int, Color>{};
+    const rank = {
+      CalStatus.absent: 0, CalStatus.attended: 1, CalStatus.excused: 2,
+      CalStatus.upcoming: 3, CalStatus.optionalPast: 4,
+    };
+    final byDay = <int, CalendarEvent>{};
+    for (final e in _monthEvents) {
+      final cur = byDay[e.date.day];
+      if (cur == null || rank[e.status]! < rank[cur.status]!) byDay[e.date.day] = e;
+    }
+    byDay.forEach((day, e) => dots[day] = _dotColor(e.status));
+
+    final today = DateTime.now();
+    final isThisMonth = today.year == _month.year && today.month == _month.month;
+
     return [
-      for (var w = 0; w < 5; w++) ...[
+      for (var w = 0; w < totalCells ~/ 7; w++) ...[
         Row(
           children: [
             for (var d = 0; d < 7; d++)
               Expanded(
-                child: _dayCell(cells[w * 7 + d].$1, outside: cells[w * 7 + d].$2),
+                child: _cell(w * 7 + d, leadIn, daysInMonth, dots,
+                    isThisMonth ? today.day : null),
               ),
           ],
         ),
@@ -143,9 +224,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
     ];
   }
 
-  Widget _dayCell(int day, {bool outside = false}) {
-    final dot = outside ? null : _dots[day];
-    final isToday = !outside && day == _today;
+  Widget _cell(int index, int leadIn, int daysInMonth, Map<int, Color> dots, int? today) {
+    final dayNum = index - leadIn + 1;
+    final outside = dayNum < 1 || dayNum > daysInMonth;
+    final int label;
+    if (dayNum < 1) {
+      label = DateTime(_month.year, _month.month, 0).day + dayNum; // prev month
+    } else if (dayNum > daysInMonth) {
+      label = dayNum - daysInMonth; // next month
+    } else {
+      label = dayNum;
+    }
+    final dot = outside ? null : dots[dayNum];
+    final isToday = !outside && dayNum == today;
     return SizedBox(
       height: 34,
       child: Stack(
@@ -157,10 +248,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
               height: 26,
               decoration: const BoxDecoration(color: T.student, shape: BoxShape.circle),
               alignment: Alignment.center,
-              child: Text('$day', style: T.ui(11.5, weight: FontWeight.w800, color: Colors.white)),
+              child: Text('$label', style: T.ui(11.5, weight: FontWeight.w800, color: Colors.white)),
             )
           else
-            Text('$day',
+            Text('$label',
                 style: T.ui(11.5,
                     weight: FontWeight.w600,
                     color: outside ? const Color(0xFFD0D7D3) : T.ink)),
@@ -178,29 +269,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Widget _eventRow(String name, String line, Color bar, Widget chip, {VoidCallback? onTap}) =>
-      CampusCard(
+  Widget _eventRow(CalendarEvent e) => CampusCard(
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-        onTap: onTap,
+        onTap: e.status == CalStatus.upcoming ? () => _openEvent(e) : null,
         child: Row(
           children: [
             Container(
               width: 4,
               height: 38,
-              decoration: BoxDecoration(color: bar, borderRadius: BorderRadius.circular(3)),
+              decoration: BoxDecoration(
+                  color: _dotColor(e.status), borderRadius: BorderRadius.circular(3)),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: T.ui(13, weight: FontWeight.w700)),
+                  Text(e.name, style: T.ui(13, weight: FontWeight.w700)),
                   const SizedBox(height: 1),
-                  Text(line, style: T.ui(10.5, color: T.text2)),
+                  Text(e.line, style: T.ui(10.5, color: T.text2)),
                 ],
               ),
             ),
-            chip,
+            _chip(e.status),
           ],
         ),
       );

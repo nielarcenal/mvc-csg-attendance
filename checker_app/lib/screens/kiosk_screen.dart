@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/scan_store.dart';
 import '../widgets/viewfinder.dart';
@@ -20,8 +22,23 @@ class KioskScreen extends StatefulWidget {
 class _KioskScreenState extends State<KioskScreen> {
   Timer? _holdTimer;
   bool _holding = false;
+  bool _cameraFailed = false;
+  String? _lastToken;
+  DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   ScanSession get s => widget.session;
+
+  bool get _useCamera => repo.hasBackend && !_cameraFailed;
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    final value = capture.barcodes.firstOrNull?.rawValue;
+    if (value == null) return;
+    final now = DateTime.now();
+    if (value == _lastToken && now.difference(_lastAt).inSeconds < 3) return;
+    _lastToken = value;
+    _lastAt = now;
+    await s.recordToken(value);
+  }
 
   @override
   void initState() {
@@ -104,23 +121,42 @@ class _KioskScreenState extends State<KioskScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('SG General Assembly', style: T.display(15)),
+                Text(s.eventName ?? 'SG General Assembly', style: T.display(15)),
                 StatusChip.green(s.timeIn ? 'Time-in' : 'Time-out'),
               ],
             ),
           ),
-          // Full-height viewfinder — tap to simulate a scan
+          // Full-height viewfinder — live camera; tap simulates when no camera
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: GestureDetector(
-                onTap: s.simulateScan,
-                child: const Viewfinder(
-                  caption: 'HOLD YOUR QR UP TO THE CAMERA',
-                  subCaption: 'RFID TAP ALSO WORKS',
-                  bracketSize: 28,
-                ),
-              ),
+              child: _useCamera
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: MobileScanner(
+                        onDetect: _onDetect,
+                        errorBuilder: (context, error, child) {
+                          if (!_cameraFailed) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) setState(() => _cameraFailed = true);
+                            });
+                          }
+                          return const Viewfinder(
+                            caption: 'HOLD YOUR QR UP TO THE CAMERA',
+                            subCaption: 'RFID TAP ALSO WORKS',
+                            bracketSize: 28,
+                          );
+                        },
+                      ),
+                    )
+                  : GestureDetector(
+                      onTap: s.simulateScan,
+                      child: const Viewfinder(
+                        caption: 'HOLD YOUR QR UP TO THE CAMERA',
+                        subCaption: 'RFID TAP ALSO WORKS',
+                        bracketSize: 28,
+                      ),
+                    ),
             ),
           ),
           // Success card
@@ -169,11 +205,14 @@ class _KioskScreenState extends State<KioskScreen> {
                           style: T.sectionLabel(color: Colors.white.withOpacity(.85), size: 9.5),
                         ),
                         const SizedBox(height: 2),
-                        Text(current?.name ?? 'Navarro, Ella P.',
+                        Text(
+                            current?.name ??
+                                (repo.hasBackend ? 'Waiting for first scan' : 'Navarro, Ella P.'),
                             style: T.display(19, color: Colors.white, height: 1.1),
                             overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
-                        Text('BSIT 4-A · scanned ${s.scanned} today',
+                        Text(
+                            '${current?.course ?? (repo.hasBackend ? 'Ready' : 'BSIT 4-A')} · scanned ${s.scanned} today',
                             style: T.ui(11, color: Colors.white.withOpacity(.9))),
                       ],
                     ),

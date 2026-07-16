@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -29,11 +28,41 @@ class ScanScreen extends StatefulWidget {
 class _ScanScreenState extends State<ScanScreen> {
   ScanSession get s => widget.session;
 
-  // Camera decoding is used on mobile builds with a backend; web builds and
-  // demo mode keep the simulated viewfinder.
-  bool get _useCamera => repo.hasBackend && !kIsWeb;
+  // Camera decoding runs wherever a backend is configured; if the platform
+  // has no camera / barcode support (e.g. desktop browsers without the
+  // BarcodeDetector API) we fall back to the simulated viewfinder.
+  bool _cameraFailed = false;
+  bool get _useCamera => repo.hasBackend && !_cameraFailed;
   String? _lastToken;
   DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // RFID readers act as keyboards: digits arrive as keystrokes ending
+  // with Enter (keyboard-wedge input, spec §2 checker app).
+  final _wedgeFocus = FocusNode();
+  final _wedgeBuffer = StringBuffer();
+
+  void _onWedgeKey(KeyEvent event) {
+    if (!repo.hasBackend || event is! KeyDownEvent) return;
+    if (event.logicalKey == LogicalKeyboardKey.enter) {
+      final token = _wedgeBuffer.toString().trim();
+      _wedgeBuffer.clear();
+      if (token.isNotEmpty) {
+        s.recordToken(token, method: 'rfid').then((_) => _haptics());
+      }
+      return;
+    }
+    final ch = event.character;
+    if (ch != null && ch.length == 1 && ch.codeUnitAt(0) >= 32) {
+      _wedgeBuffer.write(ch);
+    }
+  }
+
+  void _cameraError() {
+    if (_cameraFailed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _cameraFailed = true);
+    });
+  }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
     final value = capture.barcodes.firstOrNull?.rawValue;
@@ -80,6 +109,7 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void dispose() {
     s.removeListener(_onSession);
+    _wedgeFocus.dispose();
     super.dispose();
   }
 
@@ -95,7 +125,11 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget build(BuildContext context) {
     final current = s.current;
     return Scaffold(
-      body: Column(
+      body: KeyboardListener(
+        focusNode: _wedgeFocus,
+        autofocus: repo.hasBackend,
+        onKeyEvent: _onWedgeKey,
+        child: Column(
         children: [
           // Green header
           Container(
@@ -166,7 +200,13 @@ class _ScanScreenState extends State<ScanScreen> {
               child: _useCamera
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(20),
-                      child: MobileScanner(onDetect: _onDetect),
+                      child: MobileScanner(
+                        onDetect: _onDetect,
+                        errorBuilder: (context, error, child) {
+                          _cameraError();
+                          return const Viewfinder();
+                        },
+                      ),
                     )
                   : const Viewfinder(),
             ),
@@ -220,22 +260,42 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
           const Spacer(),
-          // Demo controls (stand-in for the camera decode stream)
+          // With a live camera only Kiosk/Sync remain; the simulate button
+          // stands in for the decode stream everywhere else.
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
             child: Row(
               children: [
-                Expanded(child: PillButton('Simulate next scan ▸', onTap: _scan)),
-                const SizedBox(width: 9),
-                GhostButton('Kiosk', onTap: () {
-                  Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => KioskScreen(session: s, school: widget.school)));
-                }),
-                const SizedBox(width: 9),
-                GhostButton('Sync', onTap: () {
-                  Navigator.of(context)
-                      .push(MaterialPageRoute(builder: (_) => SyncScreen(session: s)));
-                }),
+                if (!_useCamera) ...[
+                  Expanded(
+                      child: PillButton(
+                          repo.hasBackend ? 'Scan next on roster ▸' : 'Simulate next scan ▸',
+                          onTap: _scan)),
+                  const SizedBox(width: 9),
+                  GhostButton('Kiosk', onTap: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => KioskScreen(session: s, school: widget.school)));
+                  }),
+                  const SizedBox(width: 9),
+                  GhostButton('Sync', onTap: () {
+                    Navigator.of(context)
+                        .push(MaterialPageRoute(builder: (_) => SyncScreen(session: s)));
+                  }),
+                ] else ...[
+                  Expanded(
+                    child: GhostButton('Kiosk mode', onTap: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => KioskScreen(session: s, school: widget.school)));
+                    }),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: GhostButton('Sync status', onTap: () {
+                      Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => SyncScreen(session: s)));
+                    }),
+                  ),
+                ],
               ],
             ),
           ),
@@ -256,6 +316,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

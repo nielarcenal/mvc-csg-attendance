@@ -8,8 +8,14 @@ import 'excuse_screen.dart';
 class FinesScreen extends StatelessWidget {
   const FinesScreen({super.key});
 
+  double _sum(String tone) => fineEntries
+      .where((f) => f.tone == tone)
+      .fold(0.0, (sum, f) => sum + f.amount);
+
   @override
   Widget build(BuildContext context) {
+    final unpaid = _sum('red');
+    final unpaidCount = fineEntries.where((f) => f.tone == 'red').length;
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -45,9 +51,14 @@ class FinesScreen extends StatelessWidget {
                         Text('OUTSTANDING BALANCE',
                             style: T.sectionLabel(color: Colors.white.withOpacity(.6), size: 10)),
                         const SizedBox(height: 4),
-                        Text('₱50.00', style: T.display(34, color: const Color(0xFFFF9D94))),
+                        Text('₱${unpaid.toStringAsFixed(2)}',
+                            style: T.display(34,
+                                color: unpaid > 0 ? const Color(0xFFFF9D94) : const Color(0xFF9FE0B5))),
                         const SizedBox(height: 2),
-                        Text('1 unexcused absence · S.Y. 2026–27',
+                        Text(
+                            unpaidCount == 0
+                                ? 'All clear · S.Y. 2026–27'
+                                : '$unpaidCount unexcused absence${unpaidCount == 1 ? '' : 's'} · S.Y. 2026–27',
                             style: T.ui(11, color: Colors.white.withOpacity(.75))),
                         const SizedBox(height: 13),
                         Row(
@@ -86,11 +97,11 @@ class FinesScreen extends StatelessWidget {
                   const SizedBox(height: 11),
                   Row(
                     children: [
-                      _summaryTile('PAID', '₱50', T.checkerDeep),
+                      _summaryTile('PAID', '₱${_sum('green').toStringAsFixed(0)}', T.checkerDeep),
                       const SizedBox(width: 8),
-                      _summaryTile('WAIVED', '₱50', T.studentDeep),
+                      _summaryTile('WAIVED', '₱${_sum('blue').toStringAsFixed(0)}', T.studentDeep),
                       const SizedBox(width: 8),
-                      _summaryTile('UNPAID', '₱50', T.dangerDeep),
+                      _summaryTile('UNPAID', '₱${unpaid.toStringAsFixed(0)}', T.dangerDeep),
                     ],
                   ),
                   const SizedBox(height: 11),

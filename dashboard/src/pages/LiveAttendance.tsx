@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { LIVE_ROWS, Method } from '../data/mock';
-import { LiveView, loadLiveView, subscribeAttendance, hasBackend } from '../data/api';
+import { LiveView, loadLiveView, subscribeAttendance, downloadCsv, hasBackend } from '../data/api';
 
 const METHOD_CHIP: Record<Method, string> = { QR: 'chip blue', RFID: 'chip purple', Manual: 'chip orange' };
 
@@ -105,6 +105,18 @@ export default function LiveAttendance() {
         </button>
         <button className="filter-pill" style={{ color: 'var(--ink)' }}>Checker: All ▾</button>
         <button className="filter-pill" style={{ color: 'var(--ink)' }}>Status: All ▾</button>
+        <button
+          className="filter-pill"
+          style={{ color: 'var(--maker-deep)', fontWeight: 800 }}
+          onClick={() => downloadCsv(
+            `${view.event.name.replace(/\W+/g, '-').toLowerCase()}-attendance.csv`,
+            ['Student', 'Time-in', 'Method', 'Checker', 'School', 'Status', 'Note'],
+            rows.map((r) => [r.name, r.timeIn, r.method, r.checker, r.school,
+              r.status === 'valid' ? 'Valid' : (r.reviewLabel ?? 'For review'), r.note ?? '']),
+          )}
+        >
+          ↓ Export CSV
+        </button>
         <input className="filter-pill" style={{ marginLeft: 'auto', width: 170, border: 'none', outline: 'none' }} placeholder="Search students…" />
       </div>
 

@@ -1,7 +1,10 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import { PageHeader } from '../components/Shell';
 import { ACCOUNTS, AccountRow } from '../data/mock';
-import { useLoaded, loadAccounts, provisionAccount, ProvisionInput, hasBackend } from '../data/api';
+import {
+  useLoaded, loadAccounts, provisionAccount, ProvisionInput, hasBackend,
+  parseStudentsCsv, importStudents, resetPassword, resendInvite, setAccountActive,
+} from '../data/api';
 
 const GRID = '1.7fr .8fr .7fr .9fr .8fr 1fr';
 
@@ -16,10 +19,51 @@ export default function Accounts() {
   const [role, setRole] = useState<AccountRow['role']>('student');
   const [modalRole, setModalRole] = useState<'student' | 'checker' | null>(null);
   const [reload, setReload] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [tempPw, setTempPw] = useState<{ email: string; pw: string } | null>(null);
+  const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const accounts = useLoaded(loadAccounts, hasBackend ? [] : ACCOUNTS, [reload]);
   const rows = accounts.filter((a) => a.role === role);
   const countOf = (r: AccountRow['role']) => accounts.filter((a) => a.role === r).length;
   const statusCount = (s: AccountRow['status']) => accounts.filter((a) => a.status === s).length;
+
+  const importCsv = async (file: File) => {
+    const { rows: parsed, errors } = parseStudentsCsv(await file.text());
+    if (!parsed.length) {
+      setNotice(`Nothing imported — ${errors[0] ?? 'no valid rows'}`);
+      return;
+    }
+    const err = await importStudents(parsed);
+    setNotice(err
+      ? `Import failed: ${err}`
+      : `Imported ${parsed.length} students${errors.length ? ` (${errors.length} lines skipped)` : ''}`);
+    setReload((n) => n + 1);
+  };
+
+  const doReset = async (email: string) => {
+    setBusyEmail(email);
+    const res = await resetPassword(email);
+    setBusyEmail(null);
+    if (res.error) { setNotice(`Reset failed: ${res.error}`); return; }
+    if (res.temp_password) setTempPw({ email, pw: res.temp_password });
+  };
+
+  const doResend = async (email: string) => {
+    setBusyEmail(email);
+    const res = await resendInvite(email);
+    setBusyEmail(null);
+    setNotice(res.error ? `Resend failed: ${res.error}` : `Recovery email sent to ${email}`);
+  };
+
+  const doSetActive = async (email: string, active: boolean) => {
+    setBusyEmail(email);
+    const res = await setAccountActive(email, active);
+    setBusyEmail(null);
+    if (res.error) { setNotice(`Update failed: ${res.error}`); return; }
+    setNotice(active ? `${email} restored` : `${email} deactivated (soft delete)`);
+    setReload((n) => n + 1);
+  };
 
   return (
     <>
@@ -30,10 +74,26 @@ export default function Accounts() {
           <>
             <button className="pill-btn ghost" onClick={() => setModalRole('checker')}>+ Invite checker</button>
             <button className="pill-btn ghost" onClick={() => setModalRole('student')}>+ Add student</button>
-            <button className="pill-btn primary" style={{ padding: '9px 20px' }}>↑ Import students CSV</button>
+            <input
+              ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importCsv(f);
+                e.target.value = '';
+              }}
+            />
+            <button className="pill-btn primary" style={{ padding: '9px 20px' }} onClick={() => fileRef.current?.click()}>
+              ↑ Import students CSV
+            </button>
           </>
         }
       />
+      {notice && (
+        <div style={{ margin: '0 22px', padding: '9px 14px', background: 'rgba(63,155,216,.1)', color: 'var(--student-deep)', borderRadius: 10, fontSize: 11.5, fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} style={{ fontWeight: 800, color: 'inherit' }}>✕</button>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, padding: '2px 22px 0', alignItems: 'center', flex: 'none' }}>
         <button className={`filter-pill${role === 'student' ? ' active' : ''}`} onClick={() => setRole('student')}>
           Students · {hasBackend ? countOf('student') : 460}
@@ -76,16 +136,32 @@ export default function Accounts() {
               <div>{a.course}</div>
               <div><span className={STATUS_CHIP[a.status]} style={{ padding: '3px 10px' }}>{a.statusLabel}</span></div>
               <div style={{ color: a.lastLogin === '—' ? 'var(--muted)' : 'var(--text-2)' }}>{a.lastLogin}</div>
-              <div>
+              <div style={{ opacity: busyEmail === a.email ? 0.5 : 1 }}>
                 {a.status === 'activated' && (
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>Reset password · Deactivate</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>
+                    <button style={{ color: 'var(--student-deep)', fontWeight: 700 }} onClick={() => doReset(a.email)}>Reset password</button>
+                    {' · '}
+                    <button style={{ color: 'var(--danger-deep)', fontWeight: 700 }} onClick={() => doSetActive(a.email, false)}>Deactivate</button>
+                  </span>
                 )}
                 {(a.status === 'invited' || a.status === 'never') && (
-                  <button className="pill-btn" style={{ border: '1.5px solid var(--student)', color: 'var(--student-deep)', padding: '4px 11px', fontSize: 10 }}>
-                    Resend invite
+                  a.email !== '—' && a.statusLabel !== 'No account' ? (
+                    <button
+                      className="pill-btn"
+                      style={{ border: '1.5px solid var(--student)', color: 'var(--student-deep)', padding: '4px 11px', fontSize: 10 }}
+                      onClick={() => doResend(a.email)}
+                    >
+                      Resend invite
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>Roster only</span>
+                  )
+                )}
+                {a.status === 'deactivated' && (
+                  <button style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--checker-deep)' }} onClick={() => doSetActive(a.email, true)}>
+                    Restore
                   </button>
                 )}
-                {a.status === 'deactivated' && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>Restore</span>}
               </div>
             </div>
           ))}
@@ -101,6 +177,23 @@ export default function Accounts() {
           onClose={() => setModalRole(null)}
           onDone={() => { setModalRole(null); setReload((n) => n + 1); }}
         />
+      )}
+      {tempPw && (
+        <div
+          onClick={() => setTempPw(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 40 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: 380, borderRadius: 18, padding: 22 }}>
+            <div className="display" style={{ fontSize: 17 }}>Password reset</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 6, lineHeight: 1.5 }}>
+              New temporary password for <b>{tempPw.email}</b>. They must change it on first login.
+            </div>
+            <div style={{ marginTop: 12, background: 'var(--bg)', borderRadius: 12, padding: '13px 15px', fontWeight: 800, fontSize: 15, letterSpacing: 0.5, textAlign: 'center' }}>
+              {tempPw.pw}
+            </div>
+            <button className="pill-btn primary" style={{ width: '100%', padding: 11, marginTop: 14 }} onClick={() => setTempPw(null)}>Done</button>
+          </div>
+        </div>
       )}
     </>
   );

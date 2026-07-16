@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/Shell';
 import { EVENTS, EventRow, EventStatus } from '../data/mock';
-import { useLoaded, loadEvents, hasBackend } from '../data/api';
+import { useLoaded, loadEvents, generateFines, hasBackend } from '../data/api';
 
 const STATUS_CHIP: Record<EventStatus, { cls: string; label: string }> = {
   live: { cls: 'chip green', label: '● Live' },
@@ -22,7 +22,18 @@ export default function Events() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const events = useLoaded(loadEvents, hasBackend ? [] : EVENTS);
+
+  const closeOut = async (e: EventRow) => {
+    setBusyId(e.id);
+    const res = await generateFines(e.id);
+    setBusyId(null);
+    setNotice(res.error
+      ? `Fine generation failed: ${res.error}`
+      : `${e.name}: ${res.count} fine${res.count === 1 ? '' : 's'} generated for unexcused absentees`);
+  };
   const total = hasBackend ? events.length : 25;
   const count = (s: EventStatus[]) => events.filter((e) => s.includes(e.status)).length;
   const filters = [
@@ -69,6 +80,12 @@ export default function Events() {
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
+      {notice && (
+        <div style={{ margin: '10px 22px 0', padding: '9px 14px', background: 'rgba(226,145,63,.12)', color: 'var(--alert-deep)', borderRadius: 10, fontSize: 11.5, fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} style={{ fontWeight: 800, color: 'inherit' }}>✕</button>
+        </div>
+      )}
       <div className="card" style={{ margin: '12px 22px 18px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div className="table-head" style={{ display: 'grid', gridTemplateColumns: '1.7fr .9fr 1fr .8fr 1.1fr .8fr .4fr', gap: 8, padding: '11px 18px' }}>
           <div>EVENT</div><div>DATE</div><div>CHECK-IN WINDOW</div><div>CHECKERS</div><div>ATTENDANCE</div><div>STATUS</div><div />
@@ -111,7 +128,20 @@ export default function Events() {
               <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>—</div>
             )}
             <div><span className={STATUS_CHIP[e.status].cls}>{STATUS_CHIP[e.status].label}</span></div>
-            <div style={{ color: 'var(--muted)', fontWeight: 800 }}>⋯</div>
+            <div>
+              {e.status === 'closed' && e.required ? (
+                <button
+                  className="pill-btn"
+                  disabled={busyId === e.id}
+                  style={{ border: '1.5px solid var(--alert)', color: 'var(--alert-deep)', padding: '3px 9px', fontSize: 9.5, opacity: busyId === e.id ? 0.5 : 1 }}
+                  onClick={(ev) => { ev.stopPropagation(); closeOut(e); }}
+                >
+                  {busyId === e.id ? '…' : 'Generate fines'}
+                </button>
+              ) : (
+                <span style={{ color: 'var(--muted)', fontWeight: 800 }}>⋯</span>
+              )}
+            </div>
           </div>
         ))}
         <div className="table-foot">

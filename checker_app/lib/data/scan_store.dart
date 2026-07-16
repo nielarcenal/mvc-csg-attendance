@@ -152,6 +152,11 @@ class ScanSession extends ChangeNotifier {
 
   bool get live => repo.hasBackend;
 
+  /// Whether this student already has an in/out scan this session
+  /// (used by manual lookup to show real scan state).
+  bool hasScanned(String? studentId, {bool timeInType = true}) =>
+      studentId != null && (timeInType ? _scannedIn : _scannedOut).contains(studentId);
+
   Future<void> startEvent({
     required String eventId,
     required String school,

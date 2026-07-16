@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/demo_data.dart';
 import 'history_screen.dart';
@@ -41,7 +42,9 @@ class MoreScreen extends StatelessWidget {
                         ),
                         child: CircleAvatar(
                           backgroundColor: T.hairline2,
-                          child: Text('JD', style: T.ui(12, weight: FontWeight.w800, color: T.muted)),
+                          child: Text(
+                              demoStudent.fullName.trim().split(RegExp(r'\s+')).map((w) => w[0]).take(2).join().toUpperCase(),
+                              style: T.ui(12, weight: FontWeight.w800, color: T.muted)),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -59,18 +62,20 @@ class MoreScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _item(context, Icons.fact_check_rounded, T.checker, T.checkerDeep,
-                    'My attendance', '92% this semester', const HistoryScreen()),
+                    'My attendance', 'History & semester stats', const HistoryScreen()),
                 const SizedBox(height: 9),
                 _item(context, Icons.payments_rounded, T.danger, T.dangerDeep, 'My fines',
-                    '₱50 outstanding', const FinesScreen()),
+                    _finesSub(), const FinesScreen()),
                 const SizedBox(height: 9),
                 _item(context, Icons.notifications_rounded, T.student, T.studentDeep,
-                    'Notifications', '2 unread', const NotificationsScreen()),
+                    'Notifications', _notifSub(), const NotificationsScreen()),
                 const SizedBox(height: 9),
                 _item(context, Icons.edit_document, T.alert, T.alertDeep, 'File an excuse',
                     'For a missed event', const ExcuseScreen()),
                 const SizedBox(height: 18),
-                GhostButton('Sign out', onTap: () {
+                GhostButton('Sign out', onTap: () async {
+                  await repo.signOut();
+                  if (!context.mounted) return;
                   Navigator.of(context).pushAndRemoveUntil(
                     MaterialPageRoute(builder: (_) => const LoginScreen()),
                     (_) => false,
@@ -82,6 +87,18 @@ class MoreScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _finesSub() {
+    final unpaid = fineEntries
+        .where((f) => f.tone == 'red')
+        .fold(0.0, (sum, f) => sum + f.amount);
+    return unpaid > 0 ? '₱${unpaid.toStringAsFixed(0)} outstanding' : 'All clear';
+  }
+
+  String _notifSub() {
+    final unread = notifications.where((n) => n.unread).length;
+    return unread > 0 ? '$unread unread' : 'Nothing new';
   }
 
   Widget _item(BuildContext context, IconData icon, Color tint, Color deep, String title,
