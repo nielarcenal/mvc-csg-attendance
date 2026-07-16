@@ -13,6 +13,11 @@ dependencies:
   qr_flutter: ^4.1.0
   supabase_flutter: ^2.15.4
 
+# app_links >= 6.4 needs a newer Android Gradle Plugin than Flutter 3.24.5
+# projects use; 6.3.x builds fine and satisfies supabase_flutter.
+dependency_overrides:
+  app_links: 6.3.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

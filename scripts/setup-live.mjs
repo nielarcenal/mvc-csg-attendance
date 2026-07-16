@@ -126,12 +126,14 @@ const students = [
   { student_no: '2023-01417', full_name: 'Dela Cruz, Juan Miguel', email: 'j.delacruz@mvc.edu.ph', course: 'BSIT', year_level: 3, section: 'A', profile_id: ids.juan },
   { student_no: '2024-00318', full_name: 'Garcia, Bea A.', email: 'b.garcia@mvc.edu.ph', course: 'BSBA', year_level: 2, section: 'A', profile_id: ids.bea },
   { student_no: '2023-00840', full_name: 'Reyes, Nathan J.', email: 'n.reyes@mvc.edu.ph', course: 'BSED', year_level: 3, section: 'A', profile_id: ids.nathan },
-  { student_no: '2023-00911', full_name: 'Estrada, Mae S.', email: 'm.estrada@mvc.edu.ph', course: 'BSIT', year_level: 3, section: 'A' },
-  { student_no: '2023-00552', full_name: 'Fernandez, Paolo R.', email: 'p.fernandez@mvc.edu.ph', course: 'BSED', year_level: 3, section: 'B' },
-  { student_no: '2025-00092', full_name: 'Lim, Hannah C.', email: 'h.lim@mvc.edu.ph', course: 'BSED', year_level: 1, section: 'A' },
-  { student_no: '2024-01566', full_name: 'Ocampo, Dave S.', email: 'd.ocampo@mvc.edu.ph', course: 'BSN', year_level: 2, section: 'C' },
-  { student_no: '2022-01904', full_name: 'Dela Rosa, Rommel T.', email: 'r.delarosa@mvc.edu.ph', course: 'BSN', year_level: 4, section: 'A' },
-  { student_no: '2024-00281', full_name: 'Dela Cruz, Andrea B.', email: 'a.delacruz@mvc.edu.ph', course: 'BSED', year_level: 2, section: 'B' },
+  // PostgREST bulk inserts need identical keys on every row, so
+  // roster-only students carry an explicit profile_id: null.
+  { student_no: '2023-00911', full_name: 'Estrada, Mae S.', email: 'm.estrada@mvc.edu.ph', course: 'BSIT', year_level: 3, section: 'A', profile_id: null },
+  { student_no: '2023-00552', full_name: 'Fernandez, Paolo R.', email: 'p.fernandez@mvc.edu.ph', course: 'BSED', year_level: 3, section: 'B', profile_id: null },
+  { student_no: '2025-00092', full_name: 'Lim, Hannah C.', email: 'h.lim@mvc.edu.ph', course: 'BSED', year_level: 1, section: 'A', profile_id: null },
+  { student_no: '2024-01566', full_name: 'Ocampo, Dave S.', email: 'd.ocampo@mvc.edu.ph', course: 'BSN', year_level: 2, section: 'C', profile_id: null },
+  { student_no: '2022-01904', full_name: 'Dela Rosa, Rommel T.', email: 'r.delarosa@mvc.edu.ph', course: 'BSN', year_level: 4, section: 'A', profile_id: null },
+  { student_no: '2024-00281', full_name: 'Dela Cruz, Andrea B.', email: 'a.delacruz@mvc.edu.ph', course: 'BSED', year_level: 2, section: 'B', profile_id: null },
 ];
 await upsert('students', students, 'student_no');
 console.log(`seed: ${students.length} roster students`);
