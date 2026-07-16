@@ -7,7 +7,8 @@ plugins {
 
 android {
     namespace = "edu.mvc.csg.checker_app"
-    compileSdk = flutter.compileSdkVersion
+    // mobile_scanner's CameraX 1.5 dependencies require compileSdk >= 35.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -24,7 +25,8 @@ android {
         applicationId = "edu.mvc.csg.checker_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // CameraX 1.5 (via mobile_scanner) requires at least Android 6.0.
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
