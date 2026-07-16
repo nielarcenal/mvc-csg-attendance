@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MVC CSG Attendance System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4f6f5; --surface: #fff; --ink: #232a31; --text-2: #6b7580;
+      --student: #3f9bd8; --checker: #35a463; --maker: #8e5fae;
+    }
+    * { margin: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg); color: var(--ink);
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 26px; padding: 28px;
+    }
+    h1 { font-family: 'Bricolage Grotesque', sans-serif; font-size: 28px; text-align: center; }
+    p.sub { color: var(--text-2); font-size: 13px; text-align: center; max-width: 420px; line-height: 1.6; }
+    .apps { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    a.app {
+      display: block; width: 220px; background: var(--surface); border-radius: 18px;
+      padding: 20px; text-decoration: none; color: var(--ink);
+      box-shadow: 0 6px 24px rgba(35,42,49,.08); transition: transform .15s;
+    }
+    a.app:hover { transform: translateY(-3px); }
+    .dot { width: 38px; height: 38px; border-radius: 12px; margin-bottom: 12px; }
+    .app h2 { font-family: 'Bricolage Grotesque', sans-serif; font-size: 17px; }
+    .app p { font-size: 11.5px; color: var(--text-2); margin-top: 4px; line-height: 1.5; }
+    .tag { display: inline-block; margin-top: 12px; font-size: 10px; font-weight: 800;
+      padding: 4px 11px; border-radius: 99px; color: #fff; }
+    footer { font-size: 10.5px; color: #9aa4ad; }
+  </style>
+</head>
+<body>
+  <div>
+    <h1>MVC CSG Attendance System</h1>
+    <p class="sub">Central Student Government · offline-capable event attendance with QR scanning, live dashboards, excuses and fines.</p>
+  </div>
+  <div class="apps">
+    <a class="app" href="student/">
+      <div class="dot" style="background:var(--student)"></div>
+      <h2>Student</h2>
+      <p>Digital QR ID, event calendar, RSVP, attendance history, excuses & fines.</p>
+      <span class="tag" style="background:var(--student)">Open app →</span>
+    </a>
+    <a class="app" href="checker/">
+      <div class="dot" style="background:var(--checker)"></div>
+      <h2>Checker</h2>
+      <p>Scan QR IDs at the gate, works fully offline, manual lookup & kiosk mode.</p>
+      <span class="tag" style="background:var(--checker)">Open app →</span>
+    </a>
+    <a class="app" href="dashboard/">
+      <div class="dot" style="background:var(--maker)"></div>
+      <h2>Event maker</h2>
+      <p>Create events, watch attendance live, review late scans, manage accounts.</p>
+      <span class="tag" style="background:var(--maker)">Open dashboard →</span>
+    </a>
+  </div>
+  <footer>MVC Central Student Government · S.Y. 2026–2027</footer>
+</body>
+</html>

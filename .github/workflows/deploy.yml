@@ -1,0 +1,88 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  # Set these once as repo secrets; empty values fall back to demo mode.
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Build dashboard
+        working-directory: dashboard
+        env:
+          VITE_SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY }}
+        run: |
+          npm ci
+          npx vite build --base=/${{ github.event.repository.name }}/dashboard/
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.5
+          channel: stable
+          cache: true
+
+      - name: Build student app (web)
+        working-directory: student_app
+        run: |
+          flutter pub get
+          flutter build web --no-tree-shake-icons \
+            --base-href /${{ github.event.repository.name }}/student/ \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+
+      - name: Build checker app (web)
+        working-directory: checker_app
+        run: |
+          flutter pub get
+          flutter build web --no-tree-shake-icons \
+            --base-href /${{ github.event.repository.name }}/checker/ \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/dashboard _site/student _site/checker
+          cp site/index.html _site/index.html
+          cp -r dashboard/dist/* _site/dashboard/
+          cp dashboard/dist/index.html _site/404.html
+          cp -r student_app/build/web/* _site/student/
+          cp -r checker_app/build/web/* _site/checker/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

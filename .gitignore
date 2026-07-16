@@ -1,0 +1,39 @@
+# Node
+node_modules/
+dashboard/dist/
+
+# Env — never commit real keys
+.env
+.env.local
+*.env.local
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Platform build junk
+*.log
+.DS_Store
+Thumbs.db
+
+# Android
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+**/*.keystore
+**/*.jks
+
+# iOS
+**/ios/Pods/
+**/ios/.symlinks/
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/
