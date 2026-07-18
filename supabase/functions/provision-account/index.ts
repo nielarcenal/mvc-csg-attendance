@@ -4,12 +4,15 @@
 //
 // POST body:
 //   action: 'create' (default)
-//     { full_name, email, role: 'student'|'checker'|'event_maker',
+//     { first_name, middle_name?, last_name, email,
+//       role: 'student'|'checker'|'event_maker',
 //       mode: 'invite'|'temp_password',
-//       student_no?, course?, year_level?, section? }  // student role only
+//       student_no?, school_id?, course?, year_level?, section? }  // student role
+//     (legacy callers may still send full_name — the DB trigger splits it)
 //   action: 'reset_password'  { email } → { temp_password }
 //   action: 'resend_invite'   { email }
 //   action: 'set_active'      { email, active: boolean }  (soft delete/restore)
+//   action: 'list_users'      {} → { users: [{ id, email, last_sign_in_at }] }
 // Returns: { id?, email, temp_password? }
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -53,8 +56,23 @@ Deno.serve(async (req) => {
   }
 
   const body = await req.json().catch(() => null);
+  const action = body?.action ?? 'create';
+
+  // A8: last-login column — service role reads auth.users.last_sign_in_at.
+  if (action === 'list_users') {
+    const out: { id: string; email?: string; last_sign_in_at?: string }[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 500 });
+      if (error) return json(400, { error: error.message });
+      out.push(...data.users.map((u) => ({
+        id: u.id, email: u.email, last_sign_in_at: u.last_sign_in_at,
+      })));
+      if (data.users.length < 500) break;
+    }
+    return json(200, { users: out });
+  }
+
   if (!body?.email) return json(400, { error: 'email is required' });
-  const action = body.action ?? 'create';
 
   // Non-create actions operate on an existing profile.
   if (action !== 'create') {
@@ -89,8 +107,15 @@ Deno.serve(async (req) => {
     return json(400, { error: 'unknown action' });
   }
 
-  if (!body?.full_name || !body?.role) {
-    return json(400, { error: 'full_name, email and role are required' });
+  // Name parts (A1); tolerate legacy full_name-only callers.
+  const first = (body.first_name ?? '').trim();
+  const middle = (body.middle_name ?? '').trim() || null;
+  const last = (body.last_name ?? '').trim();
+  const displayName = first && last
+    ? [first, middle ? `${middle[0]}.` : null, last].filter(Boolean).join(' ')
+    : (body.full_name ?? '').trim();
+  if (!displayName || !body?.role) {
+    return json(400, { error: 'first_name + last_name (or full_name), email and role are required' });
   }
   if (!['student', 'checker', 'event_maker'].includes(body.role)) {
     return json(400, { error: 'invalid role' });
@@ -102,9 +127,14 @@ Deno.serve(async (req) => {
   // Create the auth user — invite email or temp password.
   let userId: string;
   let temp: string | undefined;
+  // Send parts when we have them; otherwise full_name (the DB trigger splits).
+  const nameCols = first && last
+    ? { first_name: first, middle_name: middle, last_name: last }
+    : { full_name: displayName };
+
   if (body.mode === 'invite') {
     const { data, error } = await admin.auth.admin.inviteUserByEmail(body.email, {
-      data: { full_name: body.full_name },
+      data: { full_name: displayName },
     });
     if (error) return json(400, { error: error.message });
     userId = data.user.id;
@@ -114,7 +144,7 @@ Deno.serve(async (req) => {
       email: body.email,
       password: temp,
       email_confirm: true,
-      user_metadata: { full_name: body.full_name },
+      user_metadata: { full_name: displayName },
     });
     if (error) return json(400, { error: error.message });
     userId = data.user.id;
@@ -123,7 +153,7 @@ Deno.serve(async (req) => {
   const { error: profErr } = await admin.from('profiles').upsert({
     id: userId,
     role: body.role,
-    full_name: body.full_name,
+    ...nameCols,
     email: body.email,
     account_status: body.mode === 'invite' ? 'invited' : 'never_logged_in',
     invited_by: caller.user.id,
@@ -135,8 +165,10 @@ Deno.serve(async (req) => {
     const { error: stuErr } = await admin.from('students').upsert(
       {
         student_no: body.student_no,
-        full_name: body.full_name,
+        ...nameCols,
         email: body.email,
+        // omit when absent so an upsert never nulls out a required school
+        ...(body.school_id ? { school_id: body.school_id } : {}),
         course: body.course ?? null,
         year_level: body.year_level ?? null,
         section: body.section ?? null,
