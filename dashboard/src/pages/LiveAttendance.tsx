@@ -1,46 +1,83 @@
-import { useEffect, useState } from 'react';
-import { LIVE_ROWS, Method } from '../data/mock';
-import { LiveView, loadLiveView, subscribeAttendance, downloadCsv, hasBackend } from '../data/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Method } from '../data/types';
+import { LoadError } from '../components/ConfirmDialog';
+import { LiveView, loadLiveView, subscribeAttendance, downloadCsv } from '../data/api';
 
 const METHOD_CHIP: Record<Method, string> = { QR: 'chip blue', RFID: 'chip purple', Manual: 'chip orange' };
 
 const GRID = '1.6fr .58fr .66fr .76fr .48fr 1fr .82fr';
 
-// Demo fallback mirroring the design mock.
-const DEMO_VIEW: LiveView = {
-  event: {
-    id: 'demo', name: 'SG General Assembly',
-    sub: 'MVC Gymnasium · Jul 15, 2026 · check-in 7:00–8:15 AM',
-    windowLine: '7:00 – 8:15 AM', closed: true, closesLabel: '8:15',
-  },
-  present: 351, roster: 460, rate: 76, forReview: 5,
-  rows: LIVE_ROWS, lastSync: '8:22 AM',
-};
+const selectStyle = {
+  padding: '7px 12px', borderRadius: 99, border: '1px solid var(--hairline)',
+  background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--ink)',
+} as const;
 
 export default function LiveAttendance() {
-  const [manualOnly, setManualOnly] = useState(false);
-  const [view, setView] = useState<LiveView>(DEMO_VIEW);
+  const [view, setView] = useState<LiveView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  // Filters live in the URL so refresh/share keeps state (UX §8 — this is
+  // the attendance detail sheet the standard names explicitly).
+  const [params, setParams] = useSearchParams();
+  const method = (params.get('method') ?? 'all') as 'all' | Method;
+  const checker = params.get('checker') ?? 'all';
+  const status = (params.get('status') ?? 'all') as 'all' | 'valid' | 'review';
+  const query = params.get('q') ?? '';
+  const setParam = useCallback((key: string, value: string) => {
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      if (value === 'all' || value === '') next.delete(key);
+      else next.set(key, value);
+      return next;
+    }, { replace: true });
+  }, [setParams]);
 
   useEffect(() => {
-    if (!hasBackend) return;
     let alive = true;
-    const refresh = () => loadLiveView().then((v) => { if (alive && v) setView(v); });
+    const refresh = () => loadLiveView()
+      .then((v) => { if (alive) { setView(v); setLoading(false); setFailed(false); } })
+      .catch(() => { if (alive) { setLoading(false); setFailed(true); } });
     refresh();
     const unsub = subscribeAttendance(refresh);
     return () => { alive = false; unsub(); };
-  }, []);
+  }, [attempt]);
 
-  const rows = manualOnly ? view.rows.filter((r) => r.method === 'Manual') : view.rows;
-  const pct = view.roster ? Math.round((view.present / view.roster) * 100) : 0;
+  const checkers = useMemo(
+    () => [...new Set((view?.rows ?? []).map((r) => r.checker))].sort(),
+    [view],
+  );
+  const rows = (view?.rows ?? []).filter((r) => {
+    if (method !== 'all' && r.method !== method) return false;
+    if (checker !== 'all' && r.checker !== checker) return false;
+    if (status !== 'all' && r.status !== status) return false;
+    if (query && !r.name.toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
+  const pct = view && view.roster ? Math.round((view.present / view.roster) * 100) : 0;
+
+  if (!view) {
+    if (failed) {
+      return (
+        <div style={{ flex: 1, display: 'grid', placeItems: 'center' }}>
+          <LoadError retry={() => { setLoading(true); setAttempt((n) => n + 1); }} what="live attendance" />
+        </div>
+      );
+    }
+    return (
+      <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 13 }}>
+        {loading ? 'Loading live attendance…' : 'No events yet — create one to see live attendance here.'}
+      </div>
+    );
+  }
 
   return (
     <>
       <div style={{ padding: '16px 22px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 'none' }}>
         <div>
-          <div className="display" style={{ fontSize: 21 }}>
-            {view.event.name}
-            {!hasBackend && <span style={{ fontSize: 13, color: 'var(--text-2)', fontWeight: 600, fontFamily: 'var(--font-ui)' }}> · 1st Sem Opening</span>}
-          </div>
+          <div className="display" style={{ fontSize: 21 }}>{view.event.name}</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 2 }}>{view.event.sub}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -49,14 +86,9 @@ export default function LiveAttendance() {
               <span style={{ animation: 'pulse 1.6s infinite' }}>●</span> Live
             </span>
           ) : (
-            <>
-              <span className="chip green" style={{ padding: '6px 13px', fontSize: 11 }}>
-                <span style={{ animation: 'pulse 1.6s infinite' }}>●</span> Live
-              </span>
-              <span className="chip orange" style={{ padding: '6px 13px', fontSize: 11 }}>
-                Window closed {view.event.closesLabel} — late scans go to review
-              </span>
-            </>
+            <span className="chip orange" style={{ padding: '6px 13px', fontSize: 11 }}>
+              Window closed {view.event.closesLabel} — late scans go to review
+            </span>
           )}
         </div>
       </div>
@@ -74,9 +106,7 @@ export default function LiveAttendance() {
         <div className="card" style={{ flex: 1, padding: '14px 16px' }}>
           <div className="section-label" style={{ fontSize: 9.5 }}>RATE</div>
           <div className="display" style={{ fontSize: 26, marginTop: 2 }}>{view.rate}%</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-2)', marginTop: 9 }}>
-            {hasBackend ? 'of active roster' : '↑ 5 pts vs last event'}
-          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--text-2)', marginTop: 9 }}>of active roster</div>
         </div>
         <div className="card" style={{ flex: 1, padding: '14px 16px' }}>
           <div className="section-label" style={{ fontSize: 9.5 }}>FOR REVIEW</div>
@@ -84,27 +114,28 @@ export default function LiveAttendance() {
           <div style={{ fontSize: 10.5, color: 'var(--text-2)', marginTop: 9 }}>late scans with notes</div>
         </div>
         <div className="card" style={{ flex: 1, padding: '14px 16px' }}>
-          <div className="section-label" style={{ fontSize: 9.5 }}>PENDING SYNC</div>
-          <div className="display" style={{ fontSize: 26, marginTop: 2, color: 'var(--student-deep)' }}>{hasBackend ? '—' : 12}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-2)', marginTop: 9 }}>
-            {hasBackend ? 'reported by devices on sync' : '2 devices offline'}
-          </div>
+          <div className="section-label" style={{ fontSize: 9.5 }}>LAST SYNC</div>
+          <div className="display" style={{ fontSize: 26, marginTop: 2, color: 'var(--student-deep)' }}>{view.lastSync}</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text-2)', marginTop: 9 }}>latest scan reaching the server</div>
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, padding: '12px 22px 0', alignItems: 'center', flex: 'none' }}>
-        <button className="filter-pill" style={{ color: 'var(--ink)' }}>Method: All ▾</button>
-        <button
-          className="filter-pill"
-          style={manualOnly
-            ? { background: 'var(--alert)', color: '#fff', fontWeight: 800 }
-            : { background: 'rgba(226,145,63,.14)', color: 'var(--alert-deep)', fontWeight: 800, boxShadow: 'none' }}
-          onClick={() => setManualOnly(!manualOnly)}
-        >
-          Manual only
-        </button>
-        <button className="filter-pill" style={{ color: 'var(--ink)' }}>Checker: All ▾</button>
-        <button className="filter-pill" style={{ color: 'var(--ink)' }}>Status: All ▾</button>
+        <select style={selectStyle} value={method} onChange={(e) => setParam('method', e.target.value)}>
+          <option value="all">Method: All</option>
+          <option value="QR">QR</option>
+          <option value="RFID">RFID</option>
+          <option value="Manual">Manual</option>
+        </select>
+        <select style={selectStyle} value={checker} onChange={(e) => setParam('checker', e.target.value)}>
+          <option value="all">Checker: All</option>
+          {checkers.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select style={selectStyle} value={status} onChange={(e) => setParam('status', e.target.value)}>
+          <option value="all">Status: All</option>
+          <option value="valid">Valid</option>
+          <option value="review">For review</option>
+        </select>
         <button
           className="filter-pill"
           style={{ color: 'var(--maker-deep)', fontWeight: 800 }}
@@ -117,7 +148,13 @@ export default function LiveAttendance() {
         >
           ↓ Export CSV
         </button>
-        <input className="filter-pill" style={{ marginLeft: 'auto', width: 170, border: 'none', outline: 'none' }} placeholder="Search students…" />
+        <input
+          className="filter-pill"
+          style={{ marginLeft: 'auto', width: 170, border: 'none', outline: 'none', color: 'var(--ink)' }}
+          placeholder="Search students…"
+          value={query}
+          onChange={(e) => setParam('q', e.target.value)}
+        />
       </div>
 
       <div className="card" style={{ margin: '12px 22px 18px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -154,14 +191,16 @@ export default function LiveAttendance() {
               </div>
             </div>
           ))}
-          {hasBackend && rows.length === 0 && (
+          {rows.length === 0 && (
             <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
-              No scans yet — they appear here in realtime as checkers scan.
+              {view.rows.length === 0
+                ? 'No scans yet — they appear here in realtime as checkers scan.'
+                : 'No scans match the current filters.'}
             </div>
           )}
         </div>
         <div className="table-foot">
-          <span>Showing latest {rows.length} of {view.present}</span>
+          <span>Showing {rows.length} of {view.present} scans</span>
           <span>Last scan synced {view.lastSync}</span>
         </div>
       </div>

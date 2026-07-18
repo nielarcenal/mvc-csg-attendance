@@ -16,13 +16,8 @@ interface AuthState {
   signOut: () => Promise<void>;
 }
 
-// Demo profile used when no backend is configured (mirrors the mocks).
-const DEMO_PROFILE: Profile = {
-  id: 'demo', role: 'event_maker', full_name: 'Uy, Rica S.', email: 'r.uy@mvc.edu.ph',
-};
-
 const AuthContext = createContext<AuthState>({
-  loading: false, profile: DEMO_PROFILE,
+  loading: false, profile: null,
   signIn: async () => null, signOut: async () => {},
 });
 
@@ -30,7 +25,7 @@ export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(hasBackend);
-  const [profile, setProfile] = useState<Profile | null>(hasBackend ? null : DEMO_PROFILE);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -48,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    if (!supabase) return null; // demo mode: any credentials work
+    if (!supabase) return 'Backend not configured — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return error ? error.message : null;
   };
@@ -66,7 +61,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { loading, profile } = useAuth();
   const location = useLocation();
-  if (!hasBackend) return <>{children}</>;
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--text-2)', fontSize: 13 }}>

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/Shell';
-import { SCHOOLS } from '../data/mock';
+import { SCHOOLS } from '../data/types';
 import {
-  useLoaded, loadCheckerProfiles, createEvent, hasBackend, initialsOf, colorOf,
+  useLoaded, loadCheckerProfiles, createEvent, initialsOf, colorOf,
 } from '../data/api';
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
@@ -16,7 +16,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 interface Assigned { profile_id: string; name: string; school: string }
 
-// Default schedule: next week, 6–9 PM, check-in 5:30–6:30 (mirrors the mock).
+// Default schedule: next week, 6–9 PM, check-in 5:30–6:30.
 function defaultAt(days: number, h: number, m = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -27,12 +27,11 @@ function defaultAt(days: number, h: number, m = 0): string {
 
 export default function EventCreate() {
   const navigate = useNavigate();
-  const [optional, setOptional] = useState(true);
-  const [timeOut, setTimeOut] = useState(true);
-  const [recurring, setRecurring] = useState(false);
-  const [name, setName] = useState('Acquaintance Party');
-  const [venue, setVenue] = useState('Covered Court');
-  const [description, setDescription] = useState('Welcome party for freshmen — SG-hosted.');
+  const [optional, setOptional] = useState(false);
+  const [timeOut, setTimeOut] = useState(false);
+  const [name, setName] = useState('');
+  const [venue, setVenue] = useState('');
+  const [description, setDescription] = useState('');
   const [startsAt, setStartsAt] = useState(defaultAt(8, 18));
   const [endsAt, setEndsAt] = useState(defaultAt(8, 21));
   const [opensAt, setOpensAt] = useState(defaultAt(8, 17, 30));
@@ -46,10 +45,7 @@ export default function EventCreate() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const checkers = useLoaded(loadCheckerProfiles, hasBackend ? [] : [
-    { id: 'demo-jr', full_name: 'Ramos, Joel V.' },
-    { id: 'demo-lt', full_name: 'Tan, Liza M.' },
-  ]);
+  const checkers = useLoaded(loadCheckerProfiles, []);
 
   const addChecker = () => {
     const c = checkers.find((c) => c.id === pickChecker);
@@ -98,7 +94,6 @@ export default function EventCreate() {
         actions={
           <>
             {error && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger-deep)' }}>{error}</span>}
-            <button className="pill-btn ghost">Save as template</button>
             <button className="pill-btn primary" onClick={publish} disabled={busy} style={{ opacity: busy ? 0.7 : 1 }}>
               {busy ? 'Publishing…' : 'Publish event'}
             </button>
@@ -263,26 +258,12 @@ export default function EventCreate() {
             <div style={{ background: 'rgba(53,164,99,.08)', borderRadius: 12, padding: '11px 13px', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span className="avatar" style={{ width: 28, height: 28, fontSize: 12, background: 'var(--checker)' }}>✓</span>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--checker-deep)' }}>
-                  {hasBackend ? 'Full active roster' : '460 students on roster'}
-                </div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--checker-deep)' }}>Full active roster</div>
                 <div style={{ fontSize: 10, color: 'var(--text-2)' }}>
-                  {hasBackend ? 'All active students are covered by every event' : 'Reused from “SG General Assembly”'}
+                  All active students are covered by every event — import students from the Accounts page
                 </div>
               </div>
             </div>
-            <button style={{ marginTop: 9, border: '1.5px dashed #cfd6d2', borderRadius: 12, padding: 12, textAlign: 'center', width: '100%' }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>↑ Import CSV instead</div>
-              <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 2 }}>student no · name · email · course · year</div>
-            </button>
-          </div>
-
-          <div className="card" style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 700 }}>Recurring event</div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-2)' }}>Repeat monthly with same settings</div>
-            </div>
-            <Toggle on={recurring} onChange={setRecurring} />
           </div>
         </div>
       </div>

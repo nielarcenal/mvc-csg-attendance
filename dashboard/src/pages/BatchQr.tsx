@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { PageHeader } from '../components/Shell';
-import { QR_CARDS } from '../data/mock';
-import { useLoaded, loadQrCards, hasBackend } from '../data/api';
+import { useLoadedState, loadQrCards } from '../data/api';
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -12,14 +11,20 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 export default function BatchQr() {
-  const [scope, setScope] = useState('all');
+  const [scope, setScope] = useState('all'); // 'all' or a course code
   const [cutGuides, setCutGuides] = useState(true);
   const [photoBox, setPhotoBox] = useState(false);
   const [page, setPage] = useState(1);
-  const cards = useLoaded(loadQrCards, hasBackend ? [] : QR_CARDS);
-  const total = hasBackend ? cards.length : 460;
-  const pages = hasBackend ? Math.max(1, Math.ceil(cards.length / 4)) : 58;
-  const visible = hasBackend ? cards.slice((page - 1) * 4, page * 4) : cards;
+  const { data: allCards, loading } = useLoadedState(loadQrCards, []);
+  // Course code = first word of the course string ("BSIT 3-A" → "BSIT").
+  const courses = useMemo(
+    () => [...new Set(allCards.map((c) => c.course.split(' ')[0]).filter(Boolean))].sort(),
+    [allCards],
+  );
+  const cards = scope === 'all' ? allCards : allCards.filter((c) => c.course.startsWith(scope));
+  const total = cards.length;
+  const pages = Math.max(1, Math.ceil(cards.length / 4));
+  const visible = cards.slice((page - 1) * 4, page * 4);
 
   // Opens a print-ready window with every card — the browser's print
   // dialog saves it as the PDF.
@@ -58,24 +63,34 @@ export default function BatchQr() {
       <PageHeader
         crumb={<>Reports / <span style={{ color: 'var(--maker-deep)' }}>Printable QR IDs</span></>}
         title="Batch QR ID cards"
-        actions={<button className="pill-btn primary" style={{ padding: '10px 22px', fontSize: 12.5 }} onClick={printCards}>Generate PDF · {total} cards</button>}
+        actions={
+          <button
+            className="pill-btn primary"
+            style={{ padding: '10px 22px', fontSize: 12.5, opacity: total === 0 ? 0.5 : 1 }}
+            disabled={total === 0}
+            onClick={printCards}
+          >
+            Generate PDF · {total} cards
+          </button>
+        }
       />
       <div style={{ flex: 1, display: 'flex', gap: 14, padding: '2px 22px 18px', minHeight: 0 }}>
         <div style={{ width: 330, flex: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="card" style={{ padding: '16px 18px' }}>
             <div className="card-title" style={{ marginBottom: 11 }}>Scope</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              <button
-                className="pill-btn"
-                onClick={() => setScope('all')}
-                style={scope === 'all'
-                  ? { background: 'var(--dark-card)', color: '#fff', padding: '6px 13px', fontSize: 11 }
-                  : { background: 'var(--bg)', color: 'var(--text-2)', padding: '6px 13px', fontSize: 11, fontWeight: 700 }}
-              >
-                All students · {total}
-              </button>
-              <button className="pill-btn" onClick={() => setScope('school')} style={scope === 'school' ? { background: 'var(--dark-card)', color: '#fff', padding: '6px 13px', fontSize: 11 } : { background: 'var(--bg)', color: 'var(--text-2)', padding: '6px 13px', fontSize: 11, fontWeight: 700 }}>By school ▾</button>
-              <button className="pill-btn" onClick={() => setScope('section')} style={scope === 'section' ? { background: 'var(--dark-card)', color: '#fff', padding: '6px 13px', fontSize: 11 } : { background: 'var(--bg)', color: 'var(--text-2)', padding: '6px 13px', fontSize: 11, fontWeight: 700 }}>By section ▾</button>
+              {['all', ...courses].map((c) => (
+                <button
+                  key={c}
+                  className="pill-btn"
+                  onClick={() => { setScope(c); setPage(1); }}
+                  style={scope === c
+                    ? { background: 'var(--dark-card)', color: '#fff', padding: '6px 13px', fontSize: 11 }
+                    : { background: 'var(--bg)', color: 'var(--text-2)', padding: '6px 13px', fontSize: 11, fontWeight: 700 }}
+                >
+                  {c === 'all' ? `All students · ${allCards.length}` : c}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -84,11 +99,11 @@ export default function BatchQr() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>Paper</span>
-                <span className="input-box" style={{ width: 'auto', padding: '6px 12px', fontSize: 11.5, fontWeight: 700 }}>A4 · portrait ▾</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>A4 · portrait</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>Cards per page</span>
-                <span className="input-box" style={{ width: 'auto', padding: '6px 12px', fontSize: 11.5, fontWeight: 700 }}>8</span>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>Layout</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>2 per row, flowing</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -139,7 +154,9 @@ export default function BatchQr() {
               ))}
             </div>
             <div style={{ textAlign: 'center', fontSize: 8.5, color: 'var(--muted)', fontWeight: 600, marginTop: 14 }}>
-              Preview — {visible.length} card{visible.length === 1 ? '' : 's'} on page {page}
+              {visible.length === 0
+                ? (loading ? 'Loading roster…' : 'No students on the roster yet — import a CSV from the Accounts page.')
+                : `Preview — ${visible.length} card${visible.length === 1 ? '' : 's'} on page ${page}`}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

@@ -1,6 +1,7 @@
+import { useMemo, useState } from 'react';
 import { PageHeader } from '../components/Shell';
-import { AUDIT_ROWS } from '../data/mock';
-import { useLoaded, loadAudit, hasBackend } from '../data/api';
+import { LoadError } from '../components/ConfirmDialog';
+import { useLoadedState, loadAudit } from '../data/api';
 
 const GRID = '.75fr .95fr .8fr 1fr 1.9fr';
 
@@ -22,8 +23,25 @@ function DiffChip({ text, tone }: { text: string; tone: string }) {
   );
 }
 
+const selectStyle = {
+  padding: '7px 12px', borderRadius: 99, border: '1px solid var(--hairline)',
+  background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--ink)',
+} as const;
+
 export default function AuditLog() {
-  const rows = useLoaded(loadAudit, hasBackend ? [] : AUDIT_ROWS);
+  const { data: all, loading, error, retry } = useLoadedState(loadAudit, []);
+  const [actor, setActor] = useState('all');
+  const [table, setTable] = useState('all');
+  const [action, setAction] = useState('all');
+
+  const actors = useMemo(() => [...new Set(all.map((r) => r.actor))].sort(), [all]);
+  const tables = useMemo(() => [...new Set(all.map((r) => r.table))].sort(), [all]);
+  const actions = useMemo(() => [...new Set(all.map((r) => r.action))].sort(), [all]);
+  const rows = all.filter((r) =>
+    (actor === 'all' || r.actor === actor)
+    && (table === 'all' || r.table === table)
+    && (action === 'all' || r.action === action));
+
   return (
     <>
       <PageHeader
@@ -31,10 +49,18 @@ export default function AuditLog() {
         subtitle="Append-only — read-only for every role, including super-admin"
         actions={
           <>
-            <button className="filter-pill" style={{ padding: '7px 13px' }}>Actor: All ▾</button>
-            <button className="filter-pill" style={{ padding: '7px 13px' }}>Table: All ▾</button>
-            <button className="filter-pill" style={{ padding: '7px 13px' }}>Action: All ▾</button>
-            <button className="filter-pill" style={{ padding: '7px 13px' }}>Jul 15 ▾</button>
+            <select style={selectStyle} value={actor} onChange={(e) => setActor(e.target.value)}>
+              <option value="all">Actor: All</option>
+              {actors.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <select style={selectStyle} value={table} onChange={(e) => setTable(e.target.value)}>
+              <option value="all">Table: All</option>
+              {tables.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select style={selectStyle} value={action} onChange={(e) => setAction(e.target.value)}>
+              <option value="all">Action: All</option>
+              {actions.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
           </>
         }
       />
@@ -67,9 +93,19 @@ export default function AuditLog() {
             </div>
           </div>
         ))}
+        {rows.length === 0 && (
+          error && all.length === 0 ? <LoadError retry={retry} what="the audit log" />
+          : (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+              {loading ? 'Loading audit log…'
+                : all.length === 0 ? 'No audit entries yet — they appear as records change.'
+                  : 'No entries match the current filters.'}
+            </div>
+          )
+        )}
         <div className="table-foot" style={{ padding: '9px 18px' }}>
           <span>Written automatically by database triggers — no role can edit or delete entries</span>
-          <span>{hasBackend ? `Latest ${rows.length} entries` : '1–7 of 12,406'}</span>
+          <span>Latest {rows.length} of {all.length} entries</span>
         </div>
       </div>
     </>

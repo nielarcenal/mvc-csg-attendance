@@ -1,49 +1,44 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { ReactNode, useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { hasBackend } from '../lib/supabase';
 import { loadReviewItems, initialsOf } from '../data/api';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface NavItem {
   to: string;
   label: string;
   tint: string;
   color: string;
-  badge?: number;
+  superOnly?: boolean;
 }
 
 const NAV: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', tint: 'rgba(63,155,216,.12)', color: 'var(--student-deep)' },
   { to: '/events', label: 'Events', tint: 'rgba(142,95,174,.12)', color: 'var(--maker-deep)' },
   { to: '/live', label: 'Live attendance', tint: 'rgba(142,95,174,.12)', color: 'var(--maker-deep)' },
-  { to: '/review', label: 'Review queue', tint: 'rgba(226,145,63,.14)', color: 'var(--alert-deep)', badge: 5 },
+  { to: '/review', label: 'Review queue', tint: 'rgba(226,145,63,.14)', color: 'var(--alert-deep)' },
   { to: '/accounts', label: 'Accounts', tint: 'rgba(63,155,216,.12)', color: 'var(--student-deep)' },
   { to: '/reports', label: 'Reports', tint: 'rgba(142,95,174,.12)', color: 'var(--maker-deep)' },
-  { to: '/audit', label: 'Audit log', tint: 'rgba(35,42,49,.08)', color: 'var(--ink)' },
-  { to: '/settings', label: 'Settings', tint: 'rgba(35,42,49,.08)', color: 'var(--ink)' },
+  // UX §1: last two are super_admin-only
+  { to: '/audit', label: 'Audit log', tint: 'rgba(35,42,49,.08)', color: 'var(--ink)', superOnly: true },
+  { to: '/settings', label: 'Settings', tint: 'rgba(35,42,49,.08)', color: 'var(--ink)', superOnly: true },
 ];
-
-/** Pages that only a super-admin sees; the user block switches accordingly. */
-const SUPER_ROUTES = ['/audit', '/settings'];
 
 export function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const [reviewCount, setReviewCount] = useState<number | null>(null);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
 
   useEffect(() => {
-    if (!hasBackend) return;
     loadReviewItems().then((items) => setReviewCount(items?.length ?? 0)).catch(() => {});
   }, [pathname]);
 
-  // Without a backend the user block mirrors the design mock: the persona
-  // switches to the super-admin on the super-admin-only routes.
-  const asSuper = hasBackend
-    ? profile?.role === 'super_admin'
-    : SUPER_ROUTES.some((r) => pathname.startsWith(r));
-  const displayName = hasBackend && profile ? profile.full_name : (asSuper ? 'M. Ferrer' : 'Rica Uy');
-  const initials = hasBackend && profile ? initialsOf(profile.full_name) : (asSuper ? 'MF' : 'RU');
+  const asSuper = profile?.role === 'super_admin';
+  const items = NAV.filter((i) => asSuper || !i.superOnly);
+  const displayName = profile?.full_name ?? '—';
+  const initials = profile ? initialsOf(profile.full_name) : '·';
 
   return (
     <div style={{ display: 'flex', height: '100vh', minWidth: 1080 }}>
@@ -62,7 +57,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="display" style={{ fontSize: 14 }}>CSG Events</span>
         </div>
         <nav style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12.5, fontWeight: 600 }}>
-          {NAV.map((item) => (
+          {items.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -78,24 +73,9 @@ export function Shell({ children }: { children: ReactNode }) {
               })}
             >
               {item.label}
-              {item.to === '/review' && reviewCount != null ? (
-                reviewCount > 0 && (
-                  <span style={{ background: 'var(--alert)', color: '#fff', borderRadius: 99, fontSize: 9.5, fontWeight: 800, padding: '2px 7px' }}>
-                    {reviewCount}
-                  </span>
-                )
-              ) : item.badge != null && (
-                <span
-                  style={{
-                    background: 'var(--alert)',
-                    color: '#fff',
-                    borderRadius: 99,
-                    fontSize: 9.5,
-                    fontWeight: 800,
-                    padding: '2px 7px',
-                  }}
-                >
-                  {item.badge}
+              {item.to === '/review' && reviewCount != null && reviewCount > 0 && (
+                <span style={{ background: 'var(--alert)', color: '#fff', borderRadius: 99, fontSize: 9.5, fontWeight: 800, padding: '2px 7px' }}>
+                  {reviewCount}
                 </span>
               )}
             </NavLink>
@@ -123,18 +103,26 @@ export function Shell({ children }: { children: ReactNode }) {
               {asSuper ? 'Super-admin' : 'Event maker'}
             </div>
           </div>
-          {hasBackend && (
-            <button
-              onClick={async () => { await signOut(); navigate('/login'); }}
-              title="Sign out"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 2 }}
-            >
-              ⎋
-            </button>
-          )}
+          <button
+            onClick={() => setConfirmingSignOut(true)}
+            title="Sign out"
+            aria-label="Sign out"
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--muted)', fontSize: 10.5, fontWeight: 700, padding: '8px 4px' }}
+          >
+            Sign out
+          </button>
         </div>
       </aside>
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>{children}</main>
+      {confirmingSignOut && (
+        <ConfirmDialog
+          title="Sign out?"
+          body="You'll need your password to sign back in."
+          confirmLabel="Sign out"
+          onCancel={() => setConfirmingSignOut(false)}
+          onConfirm={async () => { setConfirmingSignOut(false); await signOut(); navigate('/login'); }}
+        />
+      )}
     </div>
   );
 }

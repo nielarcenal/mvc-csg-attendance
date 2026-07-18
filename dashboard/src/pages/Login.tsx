@@ -1,7 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { FormEvent, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { hasBackend } from '../lib/supabase';
 
 // Not in the design canvas — follows the 4c student-login pattern with the
 // event-maker purple accent.
@@ -10,6 +9,7 @@ export default function Login() {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -43,11 +43,23 @@ export default function Login() {
         </div>
         <div>
           <div className="field-label">Password</div>
-          <input
-            className="input-box" style={{ marginTop: 6, borderRadius: 13, padding: '11px 14px' }}
-            type="password" placeholder="••••••••" required={hasBackend}
-            value={password} onChange={(e) => setPassword(e.target.value)}
-          />
+          <div style={{ position: 'relative', marginTop: 6 }}>
+            <input
+              className="input-box" style={{ borderRadius: 13, padding: '11px 40px 11px 14px', width: '100%' }}
+              type={showPw ? 'text' : 'password'} placeholder="••••••••" required
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              title={showPw ? 'Hide password' : 'Show password'}
+              aria-label={showPw ? 'Hide password' : 'Show password'}
+              onClick={() => setShowPw((v) => !v)}
+              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, color: 'var(--muted)' }}
+            >
+              {showPw ? '🙈' : '👁'}
+            </button>
+          </div>
         </div>
         {error && (
           <div style={{ background: 'rgba(217,89,80,.1)', color: 'var(--danger-deep)', borderRadius: 10, padding: '9px 12px', fontSize: 11.5, fontWeight: 600 }}>
@@ -62,12 +74,10 @@ export default function Login() {
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: 'var(--maker-deep)' }}>Forgot password?</div>
       </form>
       <div style={{ width: 360, background: 'rgba(142,95,174,.08)', borderRadius: 14, padding: '12px 15px', fontSize: 11, color: 'var(--maker-deep)', lineHeight: 1.55, textAlign: 'center' }}>
-        {hasBackend
-          ? <>Event maker and super-admin accounts only. Accounts are provisioned by the SG — check your school email for an <b>activation link</b>.</>
-          : <>Demo mode — no backend configured, any credentials work.</>}
+        Event maker and super-admin accounts only. Accounts are provisioned by the SG — check your
+        school email for an <b>activation link</b>, or ask the SG office to reset your password.
       </div>
       <div style={{ fontSize: 9.5, color: 'var(--muted)' }}>v1.0 · S.Y. 2026–2027</div>
     </div>

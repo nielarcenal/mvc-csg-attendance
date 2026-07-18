@@ -175,12 +175,28 @@ a {
   letter-spacing: 0.1em;
   color: var(--muted);
   border-bottom: 1px solid var(--hairline-2);
+  /* UX §8: sticky header row wherever the table scrolls */
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+
+/* UX §7: visible focus ring for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--student);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .table-row {
   border-bottom: 1px solid var(--hairline-2);
   font-size: 12px;
   align-items: center;
+}
+
+.table-row:hover {
+  background: rgba(35, 42, 49, 0.03);
 }
 
 .table-foot {

@@ -1,12 +1,13 @@
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useRef, useState } from 'react';
 import { PageHeader } from '../components/Shell';
-import { ACCOUNTS, AccountRow } from '../data/mock';
+import { ConfirmDialog, LoadError, useEscape } from '../components/ConfirmDialog';
+import { AccountRow } from '../data/types';
 import {
-  useLoaded, loadAccounts, provisionAccount, ProvisionInput, hasBackend,
+  useLoadedState, loadAccounts, provisionAccount, ProvisionInput,
   parseStudentsCsv, importStudents, resetPassword, resendInvite, setAccountActive,
 } from '../data/api';
 
-const GRID = '1.7fr .8fr .7fr .9fr .8fr 1fr';
+const GRID = '1.9fr .9fr .8fr 1fr 1.1fr';
 
 const STATUS_CHIP: Record<AccountRow['status'], string> = {
   activated: 'chip green',
@@ -22,8 +23,11 @@ export default function Accounts() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tempPw, setTempPw] = useState<{ email: string; pw: string } | null>(null);
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  // §4: crucial account actions confirm first, naming the person.
+  const [confirmAction, setConfirmAction] = useState<
+    { kind: 'deactivate' | 'reset'; name: string; email: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const accounts = useLoaded(loadAccounts, hasBackend ? [] : ACCOUNTS, [reload]);
+  const { data: accounts, loading, error: loadFailed, retry } = useLoadedState(loadAccounts, [], [reload]);
   const rows = accounts.filter((a) => a.role === role);
   const countOf = (r: AccountRow['role']) => accounts.filter((a) => a.role === r).length;
   const statusCount = (s: AccountRow['status']) => accounts.filter((a) => a.status === s).length;
@@ -96,23 +100,23 @@ export default function Accounts() {
       )}
       <div style={{ display: 'flex', gap: 8, padding: '2px 22px 0', alignItems: 'center', flex: 'none' }}>
         <button className={`filter-pill${role === 'student' ? ' active' : ''}`} onClick={() => setRole('student')}>
-          Students · {hasBackend ? countOf('student') : 460}
+          Students · {countOf('student')}
         </button>
         <button className={`filter-pill${role === 'checker' ? ' active' : ''}`} onClick={() => setRole('checker')}>
-          Checkers · {hasBackend ? countOf('checker') : 12}
+          Checkers · {countOf('checker')}
         </button>
         <button className={`filter-pill${role === 'maker' ? ' active' : ''}`} onClick={() => setRole('maker')}>
-          Event makers · {hasBackend ? countOf('maker') : 3}
+          Event makers · {countOf('maker')}
         </button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <span className="chip green" style={{ padding: '5px 11px', fontSize: 10 }}>Activated {hasBackend ? statusCount('activated') : 401}</span>
-          <span className="chip blue" style={{ padding: '5px 11px', fontSize: 10 }}>Invited {hasBackend ? statusCount('invited') : 38}</span>
-          <span className="chip orange" style={{ padding: '5px 11px', fontSize: 10 }}>Never logged in {hasBackend ? statusCount('never') : 21}</span>
+          <span className="chip green" style={{ padding: '5px 11px', fontSize: 10 }}>Activated {statusCount('activated')}</span>
+          <span className="chip blue" style={{ padding: '5px 11px', fontSize: 10 }}>Invited {statusCount('invited')}</span>
+          <span className="chip orange" style={{ padding: '5px 11px', fontSize: 10 }}>Never logged in {statusCount('never')}</span>
         </div>
       </div>
       <div className="card" style={{ margin: '12px 22px 18px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div className="table-head" style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, padding: '11px 18px' }}>
-          <div>NAME / EMAIL</div><div>STUDENT NO</div><div>COURSE</div><div>STATUS</div><div>LAST LOGIN</div><div>ACTIONS</div>
+          <div>NAME / EMAIL</div><div>STUDENT NO</div><div>COURSE</div><div>STATUS</div><div>ACTIONS</div>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
           {rows.map((a) => (
@@ -135,13 +139,12 @@ export default function Accounts() {
               <div style={{ fontWeight: 600 }}>{a.studentNo}</div>
               <div>{a.course}</div>
               <div><span className={STATUS_CHIP[a.status]} style={{ padding: '3px 10px' }}>{a.statusLabel}</span></div>
-              <div style={{ color: a.lastLogin === '—' ? 'var(--muted)' : 'var(--text-2)' }}>{a.lastLogin}</div>
               <div style={{ opacity: busyEmail === a.email ? 0.5 : 1 }}>
                 {a.status === 'activated' && (
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>
-                    <button style={{ color: 'var(--student-deep)', fontWeight: 700 }} onClick={() => doReset(a.email)}>Reset password</button>
+                    <button style={{ color: 'var(--student-deep)', fontWeight: 700 }} onClick={() => setConfirmAction({ kind: 'reset', name: a.name, email: a.email })}>Reset password</button>
                     {' · '}
-                    <button style={{ color: 'var(--danger-deep)', fontWeight: 700 }} onClick={() => doSetActive(a.email, false)}>Deactivate</button>
+                    <button style={{ color: 'var(--danger-deep)', fontWeight: 700 }} onClick={() => setConfirmAction({ kind: 'deactivate', name: a.name, email: a.email })}>Deactivate</button>
                   </span>
                 )}
                 {(a.status === 'invited' || a.status === 'never') && (
@@ -166,9 +169,17 @@ export default function Accounts() {
             </div>
           ))}
         </div>
+        {rows.length === 0 && (
+          loadFailed ? <LoadError retry={retry} what="accounts" />
+          : (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+              {loading ? 'Loading accounts…' : 'No accounts in this group yet.'}
+            </div>
+          )
+        )}
         <div className="table-foot">
           <span>Deactivations are soft deletes — history stays in the audit log</span>
-          <span>1–{rows.length} of {hasBackend ? countOf(role) : role === 'student' ? 460 : role === 'checker' ? 12 : 3}</span>
+          <span>1–{rows.length} of {countOf(role)}</span>
         </div>
       </div>
       {modalRole && (
@@ -178,11 +189,30 @@ export default function Accounts() {
           onDone={() => { setModalRole(null); setReload((n) => n + 1); }}
         />
       )}
+      {confirmAction && (
+        <ConfirmDialog
+          title={confirmAction.kind === 'deactivate'
+            ? `Deactivate ${confirmAction.name}?`
+            : `Reset password for ${confirmAction.name}?`}
+          body={confirmAction.kind === 'deactivate'
+            ? <>The account <b>{confirmAction.email}</b> loses access immediately (soft delete —
+              history stays in the audit log). You can restore it later.</>
+            : <>The current password for <b>{confirmAction.email}</b> stops working and a new
+              temporary password is shown once, for you to hand over.</>}
+          confirmLabel={confirmAction.kind === 'deactivate' ? 'Deactivate' : 'Reset password'}
+          destructive={confirmAction.kind === 'deactivate'}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => {
+            const a = confirmAction;
+            setConfirmAction(null);
+            if (!a) return;
+            if (a.kind === 'deactivate') doSetActive(a.email, false);
+            else doReset(a.email);
+          }}
+        />
+      )}
       {tempPw && (
-        <div
-          onClick={() => setTempPw(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 40 }}
-        >
+        <EscapableOverlay onClose={() => setTempPw(null)}>
           <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: 380, borderRadius: 18, padding: 22 }}>
             <div className="display" style={{ fontSize: 17 }}>Password reset</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 6, lineHeight: 1.5 }}>
@@ -193,9 +223,24 @@ export default function Accounts() {
             </div>
             <button className="pill-btn primary" style={{ width: '100%', padding: 11, marginTop: 14 }} onClick={() => setTempPw(null)}>Done</button>
           </div>
-        </div>
+        </EscapableOverlay>
       )}
     </>
+  );
+}
+
+// Modal backdrop that closes on Esc and backdrop click (UX §8).
+function EscapableOverlay({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEscape(onClose);
+  return (
+    <div
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 40 }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -235,10 +280,7 @@ function ProvisionModal({ role, onClose, onDone }: {
   const input = { marginTop: 5, borderRadius: 11, padding: '9px 12px', fontWeight: 600, width: '100%' } as const;
 
   return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 40 }}
-    >
+    <EscapableOverlay onClose={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: 400, borderRadius: 18, padding: 22 }}>
         {tempPw ? (
           <>
@@ -309,6 +351,6 @@ function ProvisionModal({ role, onClose, onDone }: {
           </form>
         )}
       </div>
-    </div>
+    </EscapableOverlay>
   );
 }

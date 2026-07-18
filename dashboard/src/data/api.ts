@@ -1,28 +1,41 @@
-// Live data layer. Every loader returns the same shape as the demo data in
-// mock.ts; when no backend is configured (hasBackend === false) pages keep
-// rendering the mocks, so the dashboard still works standalone.
+// Live data layer. Every loader queries Supabase; without a backend
+// configured the app renders a configuration notice (see App.tsx) —
+// no sample data anywhere.
 
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { supabase, hasBackend } from '../lib/supabase';
 import {
   EventRow, LiveRow, ReviewItem, AccountRow, AuditRow, Method,
-} from './mock';
+} from './types';
 
 export { hasBackend };
 
-// Re-fetch trigger shared by realtime subscribers.
+/** Loads via `loader`, starting from `fallback` (an empty state, never
+ * sample data). `loading` is true until the first load settles. */
 export function useLoaded<T>(loader: () => Promise<T | null>, fallback: T, deps: unknown[] = []): T {
+  return useLoadedState(loader, fallback, deps).data;
+}
+
+export function useLoadedState<T>(loader: () => Promise<T | null>, fallback: T, deps: unknown[] = []):
+  { data: T; loading: boolean; error: boolean; retry: () => void } {
   const [data, setData] = useState<T>(fallback);
+  const [loading, setLoading] = useState(hasBackend);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!hasBackend) return;
     let alive = true;
-    loader().then((d) => { if (alive && d != null) setData(d); })
-      .catch((e) => console.error('load failed', e));
+    setError(false);
+    loader().then((d) => { if (alive) { if (d != null) setData(d); setLoading(false); } })
+      .catch((e) => {
+        console.error('load failed', e);
+        if (alive) { setLoading(false); setError(true); }
+      });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return data;
+  }, [...deps, attempt]);
+  return { data, loading, error, retry: () => setAttempt((n) => n + 1) };
 }
 
 // ── formatting helpers ──────────────────────────────────────────────
@@ -106,7 +119,7 @@ export interface NewEventInput {
 }
 
 export async function createEvent(input: NewEventInput): Promise<string | null> {
-  if (!supabase) return null; // demo mode: pretend success
+  if (!supabase) return 'Backend not configured';
   const { data: session } = await supabase.auth.getUser();
   const { checkers, ...event } = input;
   const { data, error } = await supabase.from('events')
@@ -337,7 +350,7 @@ export interface ProvisionInput {
 
 export async function provisionAccount(input: ProvisionInput):
   Promise<{ error?: string; temp_password?: string }> {
-  if (!supabase) return { temp_password: 'demo-mode' };
+  if (!supabase) return { error: 'Backend not configured' };
   const { data, error } = await supabase.functions.invoke('provision-account', { body: input });
   if (error) return { error: error.message };
   if (data?.error) return { error: data.error };
@@ -453,10 +466,14 @@ export async function loadAudit(): Promise<AuditRow[] | null> {
       ? { kind: 'diff', from: String(oldS), fromTone: 'orange', to: String(newS), toTone: 'green', note: '' }
       : { kind: 'text', text: summarize(r) };
     return {
-      time: new Date(r.created_at).toLocaleTimeString('en-PH', { hour12: false }),
+      // Full date + time (UX §7 / FEATURE_BATCH_2 A7): "Jul 18, 8:04 AM"
+      time: new Date(r.created_at).toLocaleString('en-PH', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      }),
       actor: r.actor?.full_name ?? 'system',
       action: r.action, actionTone: tone[r.action] ?? 'dark',
       record: `${r.table_name} · ${String(r.record_id).slice(0, 8)}`,
+      table: r.table_name as string,
       change,
     };
   });
@@ -471,6 +488,21 @@ function summarize(r: any): string {
   if (r.table_name === 'excuses') return `excuse · ${v.status ?? ''}`;
   if (r.table_name === 'profiles') return `${v.role ?? ''} · ${v.account_status ?? ''}`;
   return r.action.toLowerCase();
+}
+
+// ── master data (settings page) ─────────────────────────────────────
+/** Distinct courses / year levels / sections actually present on the
+ * active roster — real master data, not a hardcoded list. */
+export async function loadRosterFacets():
+  Promise<{ courses: string[]; years: number[]; sections: string[] } | null> {
+  if (!supabase) return null;
+  const { data } = await supabase.from('students')
+    .select('course, year_level, section').eq('active', true);
+  if (!data) return null;
+  const courses = [...new Set((data as any[]).map((s) => s.course).filter(Boolean))].sort();
+  const years = [...new Set((data as any[]).map((s) => s.year_level).filter((y) => y != null))].sort();
+  const sections = [...new Set((data as any[]).map((s) => s.section).filter(Boolean))].sort();
+  return { courses, years: years as number[], sections };
 }
 
 // ── batch QR cards ──────────────────────────────────────────────────

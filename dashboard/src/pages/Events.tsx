@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/Shell';
-import { EVENTS, EventRow, EventStatus } from '../data/mock';
-import { useLoaded, loadEvents, generateFines, hasBackend } from '../data/api';
+import { ConfirmDialog, LoadError } from '../components/ConfirmDialog';
+import { EventRow, EventStatus } from '../data/types';
+import { useLoadedState, loadEvents, generateFines } from '../data/api';
 
 const STATUS_CHIP: Record<EventStatus, { cls: string; label: string }> = {
   live: { cls: 'chip green', label: '● Live' },
@@ -24,7 +25,8 @@ export default function Events() {
   const [query, setQuery] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const events = useLoaded(loadEvents, hasBackend ? [] : EVENTS);
+  const [confirmFines, setConfirmFines] = useState<EventRow | null>(null);
+  const { data: events, loading, error, retry } = useLoadedState(loadEvents, []);
 
   const closeOut = async (e: EventRow) => {
     setBusyId(e.id);
@@ -34,13 +36,13 @@ export default function Events() {
       ? `Fine generation failed: ${res.error}`
       : `${e.name}: ${res.count} fine${res.count === 1 ? '' : 's'} generated for unexcused absentees`);
   };
-  const total = hasBackend ? events.length : 25;
+  const total = events.length;
   const count = (s: EventStatus[]) => events.filter((e) => s.includes(e.status)).length;
   const filters = [
     { key: 'all', label: `All · ${total}` },
     { key: 'live', label: `● Live · ${count(['live'])}`, color: 'var(--checker-deep)' },
     { key: 'upcoming', label: `Upcoming · ${count(['upcoming', 'draft'])}` },
-    { key: 'closed', label: `Closed · ${hasBackend ? count(['closed']) : 22}` },
+    { key: 'closed', label: `Closed · ${count(['closed'])}` },
   ];
   const rows = events.filter((e) => {
     if (query && !e.name.toLowerCase().includes(query.toLowerCase())) return false;
@@ -55,10 +57,7 @@ export default function Events() {
         title="Events"
         subtitle={`S.Y. 2026–27 · ${total} events`}
         actions={
-          <>
-            <button className="pill-btn ghost">Templates</button>
-            <button className="pill-btn primary" onClick={() => navigate('/events/new')}>+ New event</button>
-          </>
+          <button className="pill-btn primary" onClick={() => navigate('/events/new')}>+ New event</button>
         }
       />
       <div style={{ display: 'flex', gap: 8, padding: '2px 22px 0', alignItems: 'center', flex: 'none' }}>
@@ -96,10 +95,10 @@ export default function Events() {
             className="table-row"
             style={{
               display: 'grid', gridTemplateColumns: '1.7fr .9fr 1fr .8fr 1.1fr .8fr .4fr', gap: 8,
-              padding: '11px 18px', cursor: 'pointer',
+              padding: '11px 18px', cursor: e.status === 'live' ? 'pointer' : 'default',
               background: e.status === 'live' ? 'rgba(53,164,99,.05)' : undefined,
             }}
-            onClick={() => navigate(e.status === 'live' ? '/live' : '/events/new')}
+            onClick={e.status === 'live' ? () => navigate('/live') : undefined}
           >
             <div>
               <div style={{ fontWeight: 700 }}>{e.name}</div>
@@ -134,7 +133,7 @@ export default function Events() {
                   className="pill-btn"
                   disabled={busyId === e.id}
                   style={{ border: '1.5px solid var(--alert)', color: 'var(--alert-deep)', padding: '3px 9px', fontSize: 9.5, opacity: busyId === e.id ? 0.5 : 1 }}
-                  onClick={(ev) => { ev.stopPropagation(); closeOut(e); }}
+                  onClick={(ev) => { ev.stopPropagation(); setConfirmFines(e); }}
                 >
                   {busyId === e.id ? '…' : 'Generate fines'}
                 </button>
@@ -144,11 +143,33 @@ export default function Events() {
             </div>
           </div>
         ))}
+        {rows.length === 0 && (
+          error && total === 0 ? <LoadError retry={retry} what="events" />
+          : (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+              {loading ? 'Loading events…'
+                : total === 0 ? 'No events yet — create the first one with “+ New event”.'
+                  : 'No events match the current filter.'}
+            </div>
+          )
+        )}
         <div className="table-foot">
-          <span>Row click opens live view (during window) or the detail sheet (after)</span>
+          <span>Clicking a live event opens the live attendance view</span>
           <span>1–{rows.length} of {total}</span>
         </div>
       </div>
+      {confirmFines && (
+        <ConfirmDialog
+          title={`Generate fines for ${confirmFines.name}?`}
+          body={<>Every active student without a valid or approved check-in and without an
+            approved excuse gets a ₱ fine at this event’s rate. Approved excuses filed later
+            will waive their fines automatically.</>}
+          confirmLabel="Generate fines"
+          destructive
+          onCancel={() => setConfirmFines(null)}
+          onConfirm={() => { const e = confirmFines; setConfirmFines(null); if (e) closeOut(e); }}
+        />
+      )}
     </>
   );
 }

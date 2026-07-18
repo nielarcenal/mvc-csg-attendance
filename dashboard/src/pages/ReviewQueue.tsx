@@ -1,18 +1,20 @@
 import { useMemo, useState } from 'react';
 import { PageHeader } from '../components/Shell';
-import { REVIEW_ITEMS, ReviewItem } from '../data/mock';
-import { useLoaded, loadReviewItems, decideReview, hasBackend } from '../data/api';
+import { ConfirmDialog, LoadError } from '../components/ConfirmDialog';
+import { ReviewItem } from '../data/types';
+import { useLoadedState, loadReviewItems, decideReview } from '../data/api';
 import { useAuth } from '../lib/auth';
 
 type Decision = 'approved' | 'rejected';
 
 export default function ReviewQueue() {
   const [tab, setTab] = useState<'all' | 'late' | 'excuse'>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(hasBackend ? null : REVIEW_ITEMS[0].id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [error, setError] = useState<string | null>(null);
+  const [confirmingReject, setConfirmingReject] = useState(false);
   const { profile } = useAuth();
-  const all = useLoaded(loadReviewItems, hasBackend ? [] : REVIEW_ITEMS);
+  const { data: all, loading, error: loadFailed, retry } = useLoadedState(loadReviewItems, []);
 
   const items = useMemo(
     () => all.filter((i) => tab === 'all' || i.kind === tab),
@@ -44,9 +46,12 @@ export default function ReviewQueue() {
         }
       />
       {items.length === 0 && (
-        <div style={{ padding: '40px 22px', textAlign: 'center', color: 'var(--muted)', fontSize: 12.5 }}>
-          Queue is clear — nothing waiting for review.
-        </div>
+        loadFailed ? <LoadError retry={retry} what="the review queue" />
+        : (
+          <div style={{ padding: '40px 22px', textAlign: 'center', color: 'var(--muted)', fontSize: 12.5 }}>
+            {loading ? 'Loading review queue…' : 'Queue is clear — nothing waiting for review.'}
+          </div>
+        )
       )}
       {selected && (
       <div style={{ flex: 1, display: 'flex', gap: 14, padding: '2px 22px 18px', minHeight: 0 }}>
@@ -140,15 +145,27 @@ export default function ReviewQueue() {
             </button>
             <button
               className="pill-btn"
-              onClick={() => decide('rejected')}
+              onClick={() => setConfirmingReject(true)}
               disabled={!!decision}
               style={{ border: '1.5px solid var(--danger)', color: 'var(--danger-deep)', padding: '12px 22px', fontSize: 12.5, opacity: decision ? 0.5 : 1 }}
             >
-              Reject with reason
+              Reject
             </button>
+            {confirmingReject && (
+              <ConfirmDialog
+                title={`Reject ${selected.name}?`}
+                body={selected.kind === 'late'
+                  ? 'The scan stays on record as rejected and does NOT count as present. A fine may apply when the event closes.'
+                  : 'The excuse is marked rejected — the absence stays unexcused and its fine stands.'}
+                confirmLabel="Reject"
+                destructive
+                onCancel={() => setConfirmingReject(false)}
+                onConfirm={() => { setConfirmingReject(false); decide('rejected'); }}
+              />
+            )}
             <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted)', fontWeight: 600 }}>
               {error ? <span style={{ color: 'var(--danger-deep)' }}>{error}</span>
-                : `Logged to audit trail as ${profile?.full_name ?? 'R. Uy'}`}
+                : `Logged to audit trail as ${profile?.full_name ?? '—'}`}
             </span>
           </div>
         </div>
