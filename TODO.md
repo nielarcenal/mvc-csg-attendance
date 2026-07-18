@@ -22,6 +22,25 @@ with the real implementation.
   a manual toggle that gates sync (works, and is honest), but it does not
   auto-detect airplane mode. Add `connectivity_plus` and flip state + flush
 
+## UX audit deferrals (2026-07-18 — reasons per UX_STANDARDS acceptance)
+- **go_router adoption in both Flutter apps** (§1 Router). The behavioral
+  guarantees exist today (auth redirect on launch/sign-out, role rejection at
+  sign-in, stack reset to login, working system back), but routing is raw
+  Navigator. Converting is a structural refactor that lands with the
+  Session 9–11 client rework rather than as an audit patch.
+- **Distinct scan sounds** (§6). Implemented with SystemSound (click for
+  accepted, alert/click for unknown, silence+strong haptic for duplicate) —
+  fully distinct custom audio needs bundled assets + an audio package; add
+  when a real device test can tune volumes outdoors.
+- **Notification deep-links** (§1) blocked on FCM (above).
+- **1.3x font scale + outdoor real-device scan verification** (§7, audit
+  acceptance): needs physical hardware; scheduled into Session 12 regression.
+- **QR card name auto-fit** (§7 overflow): FEATURE_BATCH_2 Session 9 item.
+- **Sortable tables + URL sort state** (§8 "where meaningful"): specified as
+  part of FEATURE_BATCH_2 Session 9 (school/year/course/name sorting).
+- **Audit log date-range filter**: Session 11 (viewer now shows full
+  date+time and filters by actor/table/action).
+
 ## FEATURE_BATCH_2 transition (backend landed Session 8, 2026-07-18)
 - **Clients not yet session-aware.** The DB is session-level
   (event_sessions, attendance.session_id); deployed clients still scan at
