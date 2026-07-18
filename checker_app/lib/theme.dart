@@ -153,32 +153,81 @@ class OutlineChip extends StatelessWidget {
       );
 }
 
-/// Full-width filled pill button with a colored glow.
+/// Full-width filled pill button with a colored glow. While [busy] it shows
+/// an inline 16px spinner next to the label and ignores taps (UX §3).
 class PillButton extends StatelessWidget {
   const PillButton(this.label,
-      {super.key, this.color = T.accent, this.textColor = Colors.white, this.onTap, this.fontSize = 13.5});
+      {super.key, this.color = T.accent, this.textColor = Colors.white, this.onTap,
+       this.fontSize = 13.5, this.busy = false});
 
   final String label;
   final Color color;
   final Color textColor;
   final VoidCallback? onTap;
   final double fontSize;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
+        onTap: busy ? null : onTap,
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: color,
+            color: busy ? color.withOpacity(.75) : color,
             borderRadius: BorderRadius.circular(99),
             boxShadow: T.glow(color),
           ),
           alignment: Alignment.center,
-          child: Text(label, style: T.ui(fontSize, weight: FontWeight.w800, color: textColor)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy) ...[
+                SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: textColor),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Text(label, style: T.ui(fontSize, weight: FontWeight.w800, color: textColor)),
+            ],
+          ),
         ),
       );
+}
+
+/// UX §2/§4 confirmation dialog: Cancel is the default action; the confirm
+/// button restates the verb and goes red when destructive.
+Future<bool> confirmDialog(
+  BuildContext context, {
+  required String title,
+  required String body,
+  required String confirmLabel,
+  bool destructive = false,
+}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: T.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text(title, style: T.display(17)),
+      content: Text(body, style: T.ui(12.5, color: T.text2, height: 1.5)),
+      actions: [
+        TextButton(
+          autofocus: true,
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('Cancel', style: T.ui(12.5, weight: FontWeight.w700, color: T.text2)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(confirmLabel,
+              style: T.ui(12.5, weight: FontWeight.w800,
+                  color: destructive ? T.dangerDeep : T.accentDeep)),
+        ),
+      ],
+    ),
+  );
+  return ok ?? false;
 }
 
 /// Ghost (outlined) pill button.
