@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-import '../data/demo_data.dart';
+import '../data/models.dart';
 import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import 'home_shell.dart';
 
-/// 6a — Event detail with RSVP: blue header, info rows, RSVP block,
-/// reminders note, "Open my ID" CTA. Pass an [EventItem] to show a real
-/// event; without one it renders the design mock (demo mode).
+/// 6a — Event detail: blue header, info rows, RSVP block (optional events
+/// only), reminders note, "Open my ID" CTA. Renders the real [EventItem]
+/// passed in — callers must not navigate here without one.
 class EventDetailScreen extends StatefulWidget {
-  const EventDetailScreen({super.key, this.event});
+  const EventDetailScreen({super.key, required this.event});
 
-  final EventItem? event;
+  final EventItem event;
 
   @override
   State<EventDetailScreen> createState() => _EventDetailScreenState();
@@ -18,18 +18,17 @@ class EventDetailScreen extends StatefulWidget {
 
 class _EventDetailScreenState extends State<EventDetailScreen> {
   bool? _going;
-  int _headcount = 212;
+  int _headcount = 0;
+
+  EventItem get e => widget.event;
 
   @override
   void initState() {
     super.initState();
-    _going = widget.event != null ? widget.event!.going : true;
-    if (repo.hasBackend) {
-      _headcount = 0;
-      repo.rsvpCount(widget.event?.id).then((n) {
-        if (mounted && n != null) setState(() => _headcount = n);
-      });
-    }
+    _going = e.going;
+    repo.rsvpCount(e.id).then((n) {
+      if (mounted && n != null) setState(() => _headcount = n);
+    });
   }
 
   Future<void> _setGoing(bool going) async {
@@ -38,7 +37,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       if (_going != true && going) _headcount++;
       _going = going;
     });
-    final err = await repo.setRsvp(widget.event?.id, going);
+    final err = await repo.setRsvp(e.id, going);
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
     }
@@ -86,19 +85,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                           borderRadius: BorderRadius.circular(99),
                         ),
                         child: Text(
-                            widget.event == null || !widget.event!.required
-                                ? 'Optional · RSVP open'
-                                : 'Required event',
+                            e.required ? 'Required event' : 'Optional · RSVP open',
                             style: T.ui(10, weight: FontWeight.w800, color: Colors.white)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 14),
-                  Text(widget.event?.name ?? 'Acquaintance Party',
-                      style: T.display(24, color: Colors.white)),
+                  Text(e.name, style: T.display(24, color: Colors.white)),
                   const SizedBox(height: 3),
-                  Text(widget.event?.dateLine ?? 'Welcome party for freshmen — hosted by the SG',
-                      style: T.ui(12, color: Colors.white.withOpacity(.92))),
+                  Text(e.dateLine, style: T.ui(12, color: Colors.white.withOpacity(.92))),
                 ],
               ),
             ),
@@ -113,75 +108,80 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   child: Column(
                     children: [
                       _infoRow(T.student, T.studentDeep, Icons.play_arrow_rounded,
-                          widget.event?.dateLine ?? 'Friday, July 24 · 6:00 – 9:00 PM',
+                          e.windowLine ?? e.dateLine,
                           'Scans outside the window need approval'),
                       const SizedBox(height: 11),
                       _infoRow(T.checker, T.checkerDeep, Icons.place_rounded,
-                          widget.event?.venue ?? 'Covered Court',
+                          e.venue.isEmpty ? 'Venue to be announced' : e.venue,
                           'Scan your QR at the entrance gate'),
-                      const SizedBox(height: 11),
-                      _infoRow(T.alert, T.alertDeep, Icons.priority_high_rounded,
-                          'Late scans go to review', 'After 6:30 PM your entry needs approval',
-                          tintAlpha: .12),
+                      if (e.closeLabel != null) ...[
+                        const SizedBox(height: 11),
+                        _infoRow(T.alert, T.alertDeep, Icons.priority_high_rounded,
+                            'Late scans go to review',
+                            'After ${e.closeLabel} your entry needs approval',
+                            tintAlpha: .12),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 11),
-                CampusCard(
-                  radius: 18,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Are you going?', style: T.display(14)),
-                            const SizedBox(height: 2),
-                            Text('$_headcount going · helps the SG plan food & seats',
-                                style: T.ui(10.5, color: T.text2)),
-                          ],
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => _setGoing(true),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _going == true ? T.checker : Colors.transparent,
-                            border: _going == true
-                                ? null
-                                : Border.all(color: const Color(0xFFD5DCD8), width: 1.5),
-                            borderRadius: BorderRadius.circular(99),
-                            boxShadow: _going == true
-                                ? [BoxShadow(color: T.checker.withOpacity(.3), blurRadius: 14, offset: const Offset(0, 5))]
-                                : null,
+                if (!e.required) ...[
+                  const SizedBox(height: 11),
+                  CampusCard(
+                    radius: 18,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Are you going?', style: T.display(14)),
+                              const SizedBox(height: 2),
+                              Text('$_headcount going · helps the SG plan food & seats',
+                                  style: T.ui(10.5, color: T.text2)),
+                            ],
                           ),
-                          child: Text('Going ✓',
-                              style: T.ui(11.5, weight: FontWeight.w800,
-                                  color: _going == true ? Colors.white : T.text2)),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: () => _setGoing(false),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _going == false ? T.danger : Colors.transparent,
-                            border: _going == false
-                                ? null
-                                : Border.all(color: const Color(0xFFD5DCD8), width: 1.5),
-                            borderRadius: BorderRadius.circular(99),
+                        GestureDetector(
+                          onTap: () => _setGoing(true),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _going == true ? T.checker : Colors.transparent,
+                              border: _going == true
+                                  ? null
+                                  : Border.all(color: const Color(0xFFD5DCD8), width: 1.5),
+                              borderRadius: BorderRadius.circular(99),
+                              boxShadow: _going == true
+                                  ? [BoxShadow(color: T.checker.withOpacity(.3), blurRadius: 14, offset: const Offset(0, 5))]
+                                  : null,
+                            ),
+                            child: Text('Going ✓',
+                                style: T.ui(11.5, weight: FontWeight.w800,
+                                    color: _going == true ? Colors.white : T.text2)),
                           ),
-                          child: Text('Can’t',
-                              style: T.ui(11.5, weight: FontWeight.w700,
-                                  color: _going == false ? Colors.white : T.text2)),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => _setGoing(false),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _going == false ? T.danger : Colors.transparent,
+                              border: _going == false
+                                  ? null
+                                  : Border.all(color: const Color(0xFFD5DCD8), width: 1.5),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text('Can’t',
+                                style: T.ui(11.5, weight: FontWeight.w700,
+                                    color: _going == false ? Colors.white : T.text2)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 11),
                 CampusCard(
                   radius: 18,
@@ -189,20 +189,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const SectionLabel('Reminders'),
+                      const SectionLabel('Your QR'),
                       const SizedBox(height: 5),
-                      Text.rich(
-                        TextSpan(
-                          text: 'We’ll ping you ',
-                          children: [
-                            TextSpan(text: '24 hours', style: T.ui(11.5, weight: FontWeight.w700)),
-                            const TextSpan(text: ' and '),
-                            TextSpan(text: '1 hour', style: T.ui(11.5, weight: FontWeight.w700)),
-                            const TextSpan(
-                                text:
-                                    ' before. Your QR is cached — it works even with no signal at the venue.'),
-                          ],
-                        ),
+                      Text(
+                        'Your QR is cached on this phone — it works even with no signal at the venue.',
                         style: T.ui(11.5, color: T.text2, height: 1.55),
                       ),
                     ],
@@ -217,7 +207,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               top: false,
               child: PillButton('Open my ID', onTap: () {
                 Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const HomeShell(initialIndex: 1)),
+                  MaterialPageRoute(
+                      builder: (_) => const HomeShell(initialIndex: HomeShell.tabId)),
                 );
               }),
             ),
