@@ -13,9 +13,9 @@ import 'live_repo.dart' as repo;
 /// against the cache, carries a client-generated UUID + `scannedAt`
 /// timestamp, and is queued for idempotent upsert to Supabase
 /// (`upsert_scan` RPC — earliest scanned_at wins). `scannedAt` decides
-/// validity — never the sync time. In demo mode (no backend configured)
-/// everything stays in memory and "Simulate next scan" cycles the
-/// success → duplicate → unknown states like the interactive prototype.
+/// validity — never the sync time. Both the roster cache and the queue
+/// survive app restarts (SharedPreferences), so airplane-mode scanning
+/// keeps working after a relaunch.
 
 class RosterEntry {
   const RosterEntry({
@@ -37,20 +37,46 @@ class RosterEntry {
   final String? id; // Supabase students.id
   final String? qrToken;
   final String? rfidUid;
+
+  Map<String, dynamic> toJson() => {
+        'id': id, 'name': name, 'studentNo': studentNo, 'course': course,
+        'initials': initials, 'colorSeed': colorSeed,
+        'qrToken': qrToken, 'rfidUid': rfidUid,
+      };
+
+  static RosterEntry fromJson(Map<String, dynamic> j) => RosterEntry(
+        id: j['id'], name: j['name'], studentNo: j['studentNo'],
+        course: j['course'], initials: j['initials'], colorSeed: j['colorSeed'],
+        qrToken: j['qrToken'], rfidUid: j['rfidUid'],
+      );
 }
 
-/// Mutable: live_repo replaces this with the real roster after sign-in.
-List<RosterEntry> roster = const [
-  RosterEntry(name: 'Dela Cruz, Juan Miguel', studentNo: '2023-01417', course: 'BSIT 3-A', initials: 'JD', colorSeed: 0),
-  RosterEntry(name: 'Dela Cruz, Andrea B.', studentNo: '2024-00281', course: 'BSED 2-B', initials: 'AD', colorSeed: 1),
-  RosterEntry(name: 'Dela Rosa, Rommel T.', studentNo: '2022-01904', course: 'BSN 4-A', initials: 'RD', colorSeed: 2),
-  RosterEntry(name: 'Navarro, Ella P.', studentNo: '2023-00711', course: 'BSIT 4-A', initials: 'EN', colorSeed: 0),
-  RosterEntry(name: 'Chua, Marvin L.', studentNo: '2023-01502', course: 'BSIT 2-B', initials: 'MC', colorSeed: 1),
-  RosterEntry(name: 'Torres, Miguel A.', studentNo: '2024-00644', course: 'BSBA 1-A', initials: 'MT', colorSeed: 2),
-  RosterEntry(name: 'Garcia, Bea A.', studentNo: '2024-00318', course: 'BSBA 2-A', initials: 'BG', colorSeed: 3),
-  RosterEntry(name: 'Abella, Kristine M.', studentNo: '2022-00190', course: 'BSN 3-C', initials: 'KA', colorSeed: 0),
-  RosterEntry(name: 'Bautista, Leo P.', studentNo: '2023-00933', course: 'BSED 2-A', initials: 'LB', colorSeed: 1),
-];
+/// The locally cached roster — populated by live_repo.refreshRoster() and
+/// restored from disk on launch so offline validation works after a restart.
+List<RosterEntry> roster = const [];
+
+/// When the roster cache was last refreshed from the server (null = never).
+DateTime? rosterSyncedAt;
+
+const _rosterKey = 'roster_cache_v1';
+const _rosterAtKey = 'roster_cache_at_v1';
+
+Future<void> persistRoster() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_rosterKey, jsonEncode(roster.map((r) => r.toJson()).toList()));
+  await prefs.setString(_rosterAtKey, (rosterSyncedAt ?? DateTime.now()).toIso8601String());
+}
+
+Future<void> restoreRoster() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(_rosterKey);
+  if (raw == null) return;
+  roster = (jsonDecode(raw) as List)
+      .map((j) => RosterEntry.fromJson(Map<String, dynamic>.from(j)))
+      .toList();
+  final at = prefs.getString(_rosterAtKey);
+  rosterSyncedAt = at == null ? null : DateTime.tryParse(at);
+}
 
 enum ScanResult { success, duplicate, unknown }
 
@@ -64,6 +90,8 @@ class ScanRecord {
     required this.result,
     required this.method,
     this.course,
+    this.forReview = false,
+    this.lateMinutes = 0,
     this.syncState = SyncState.queued,
   });
 
@@ -74,6 +102,12 @@ class ScanRecord {
   final ScanResult result;
   final String method;
   final String? course;
+
+  /// Accepted but outside the checking window (UX §6: distinct BLUE state).
+  /// The server computes the authoritative status from scanned_at; this
+  /// mirrors that rule locally so the checker sees it immediately.
+  final bool forReview;
+  final int lateMinutes;
   SyncState syncState;
 }
 
@@ -124,23 +158,24 @@ String newClientId() {
 
 const _queueKey = 'scan_queue_v1';
 
-/// Scan session used by the scan + kiosk screens. In demo mode it cycles
-/// success → duplicate → unknown like the prototype (3a); with a backend it
-/// validates real tokens against the cached roster and syncs through
-/// `upsert_scan`.
+/// Scan session used by the scan + kiosk screens: validates tokens against
+/// the cached roster, blocks duplicates locally, queues offline, and syncs
+/// through the idempotent `upsert_scan` RPC.
 class ScanSession extends ChangeNotifier {
   bool online = true;
   bool timeIn = true;
-  int scanned = 128;
+  int scanned = 0;
   int queued = 0;
-  int dupes = 3;
-  int _step = 0;
-  int _rosterIx = 0;
+  int dupes = 0;
 
-  // Live-mode context (set by events_screen before scanning starts).
+  // Event context (set by events_screen before scanning starts).
   String? eventId;
   String? eventName;
   String? windowLine;
+
+  /// When the checking window closes — scans after this are still accepted
+  /// but flagged for review locally (mirrors compute_scan_status).
+  DateTime? checkingClosesAt;
   String school = 'SOC';
   String deviceId = 'CHK-01';
   final Set<String> _scannedIn = {}; // student ids seen this session (in)
@@ -185,13 +220,7 @@ class ScanSession extends ChangeNotifier {
 
   void toggleOnline() {
     online = !online;
-    if (online) {
-      if (live) {
-        flush();
-      } else if (queued > 0) {
-        queued = 0; // demo: auto-sync on reconnect
-      }
-    }
+    if (online) flush();
     notifyListeners();
   }
 
@@ -205,8 +234,7 @@ class ScanSession extends ChangeNotifier {
     return '$hour12:${now.minute.toString().padLeft(2, '0')}';
   }
 
-  /// Camera/RFID/simulated entry point in live mode. The QR payload is
-  /// `<qr_token>` or `<qr_token>:<epoch>` (rotating student ID).
+  /// Camera/RFID entry point. The QR payload is the student's `qr_token`.
   Future<void> recordToken(String raw, {String method = 'qr'}) async {
     final token = raw.split(':').first.trim();
     final entry = roster
@@ -219,10 +247,12 @@ class ScanSession extends ChangeNotifier {
     await recordStudent(entry.first, method: method);
   }
 
-  /// Manual-lookup / camera-confirmed entry point in live mode.
+  /// Manual-lookup / camera-confirmed entry point.
   Future<void> recordStudent(RosterEntry entry, {String method = 'qr', String? note}) async {
-    if (!live || eventId == null || entry.id == null) {
-      _feedback(entry, ScanResult.success, method);
+    if (eventId == null || entry.id == null) {
+      // No event context / roster row without an id — nothing real can be
+      // recorded, so surface it as an unknown scan instead of faking success.
+      _feedback(null, ScanResult.unknown, method);
       return;
     }
     final seen = timeIn ? _scannedIn : _scannedOut;
@@ -248,24 +278,25 @@ class ScanSession extends ChangeNotifier {
   }
 
   void _feedback(RosterEntry? entry, ScanResult result, String method) {
+    final now = DateTime.now();
+    final closes = checkingClosesAt;
+    final late = result == ScanResult.success && closes != null && now.isAfter(closes);
     final record = ScanRecord(
       clientId: newClientId(),
       name: entry?.name ?? 'Unknown code',
-      time: _clock(DateTime.now()),
+      time: _clock(now),
       result: result,
       method: method.toUpperCase() == 'QR' ? 'QR' : method[0].toUpperCase() + method.substring(1),
       course: entry?.course,
+      forReview: late,
+      lateMinutes: late ? now.difference(closes).inMinutes : 0,
     );
     current = record;
     if (result == ScanResult.success) {
       scanned++;
-      if (live) {
-        queued = queue
-            .where((q) => q.state != SyncState.synced && q.state != SyncState.merged)
-            .length;
-      } else if (!online) {
-        queued++;
-      }
+      queued = queue
+          .where((q) => q.state != SyncState.synced && q.state != SyncState.merged)
+          .length;
     } else if (result == ScanResult.duplicate) {
       dupes++;
     }
@@ -331,32 +362,10 @@ class ScanSession extends ChangeNotifier {
     queued = queue.length;
   }
 
-  /// Demo/prototype behavior; in live mode it scans the next real roster
-  /// member's token so the flow can be exercised without a camera.
-  void simulateScan() {
-    if (live) {
-      final withTokens = roster.where((r) => r.qrToken != null).toList();
-      if (withTokens.isEmpty) return;
-      recordToken(withTokens[_rosterIx++ % withTokens.length].qrToken!);
-      return;
-    }
-    final result = switch (_step % 3) {
-      0 => ScanResult.success,
-      1 => ScanResult.duplicate,
-      _ => ScanResult.unknown,
-    };
-    _step++;
-    final entry = roster[_rosterIx % roster.length];
-    if (result == ScanResult.success) _rosterIx++;
-    _feedback(result == ScanResult.unknown ? null : entry, result, 'QR');
-  }
-
   void reset() {
-    scanned = live ? 0 : 128;
-    queued = live ? queue.length : 0;
-    dupes = live ? 0 : 3;
-    _step = 0;
-    _rosterIx = 0;
+    scanned = 0;
+    queued = queue.length;
+    dupes = 0;
     current = null;
     recent.clear();
     notifyListeners();

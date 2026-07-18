@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/scan_store.dart';
 
@@ -17,24 +16,22 @@ class ManualLookupScreen extends StatefulWidget {
 }
 
 class _ManualLookupScreenState extends State<ManualLookupScreen> {
-  final _query = TextEditingController(text: repo.hasBackend ? '' : 'dela');
-  String? _expanded = repo.hasBackend ? null : 'Dela Cruz, Juan Miguel';
-  final Map<String, String> _recorded =
-      repo.hasBackend ? {} : {'Dela Cruz, Andrea B.': '7:38'};
+  final _query = TextEditingController();
+  String? _expanded;
+  final Map<String, String> _recorded = {};
 
   Future<void> _recordManual(RosterEntry r) async {
     final now = DateTime.now();
     final h = now.hour % 12 == 0 ? 12 : now.hour % 12;
     setState(() =>
         _recorded[r.name] = '$h:${now.minute.toString().padLeft(2, '0')}');
-    if (widget.session != null && repo.hasBackend) {
-      await widget.session!
-          .recordStudent(r, method: 'manual', note: 'manual lookup');
-    }
+    await widget.session
+        ?.recordStudent(r, method: 'manual', note: 'manual lookup');
     if (!mounted) return;
+    final type = widget.session?.timeIn ?? true ? 'Time-in' : 'Time-out';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       backgroundColor: T.darkCard,
-      content: Text('Time-in recorded · manual · tagged for review',
+      content: Text('$type recorded · manual · tagged for review',
           style: T.ui(12, color: Colors.white)),
     ));
   }
@@ -131,6 +128,23 @@ class _ManualLookupScreenState extends State<ManualLookupScreen> {
                             style: T.ui(11.5, color: T.muted)),
                       ),
                     ),
+                  if (q.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 30),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.search_rounded, size: 26, color: T.muted),
+                          const SizedBox(height: 8),
+                          Text(
+                            roster.isEmpty
+                                ? 'No roster cached yet — download it from My events first.'
+                                : 'Type a name or student number to search the cached roster (${roster.length} students).',
+                            textAlign: TextAlign.center,
+                            style: T.ui(11.5, color: T.muted, height: 1.5),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -142,8 +156,7 @@ class _ManualLookupScreenState extends State<ManualLookupScreen> {
 
   Widget _resultCard(RosterEntry r) {
     final expanded = _expanded == r.name;
-    final alreadyIn = repo.hasBackend &&
-        widget.session != null &&
+    final alreadyIn = widget.session != null &&
         widget.session!.hasScanned(r.id, timeInType: widget.session!.timeIn);
     final inTime = _recorded[r.name] ?? (alreadyIn ? '✓' : null);
     final highlight = _query.text.trim().toLowerCase();
@@ -181,33 +194,22 @@ class _ManualLookupScreenState extends State<ManualLookupScreen> {
           ),
           if (expanded && inTime == null) ...[
             const SizedBox(height: 11),
-            Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _recordManual(r),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: T.accent,
-                        borderRadius: BorderRadius.circular(99),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text('Record time-in · manual',
-                          style: T.ui(12, weight: FontWeight.w800, color: Colors.white)),
-                    ),
-                  ),
+            GestureDetector(
+              onTap: () => _recordManual(r),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                  color: T.accent,
+                  borderRadius: BorderRadius.circular(99),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFFD5DCD8), width: 1.5),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Text('Details', style: T.ui(12, weight: FontWeight.w700, color: T.text2)),
-                ),
-              ],
+                alignment: Alignment.center,
+                child: Text(
+                    widget.session?.timeIn ?? true
+                        ? 'Record time-in · manual'
+                        : 'Record time-out · manual',
+                    style: T.ui(12, weight: FontWeight.w800, color: Colors.white)),
+              ),
             ),
           ],
         ],

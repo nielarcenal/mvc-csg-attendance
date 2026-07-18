@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../theme.dart';
-import '../data/live_repo.dart' as repo;
 import '../data/scan_store.dart';
 import '../widgets/viewfinder.dart';
 import 'manual_lookup_screen.dart';
@@ -10,11 +9,10 @@ import 'kiosk_screen.dart';
 import 'sync_screen.dart';
 
 /// 1b + 3a — Scan screen: green header (school, ONLINE/OFFLINE pill,
-/// Time-in/Time-out toggle), viewfinder, feedback card
+/// Time-in/Time-out toggle), camera viewfinder, feedback card
 /// (idle / success / duplicate / unknown), counters, manual lookup, RFID.
-///
-/// "Simulate next scan" stands in for the camera decode stream and cycles
-/// success → duplicate → unknown with the intended feedback timing.
+/// If the platform has no camera/decoder, manual lookup and the RFID
+/// keyboard wedge remain the input paths.
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key, required this.session, this.school = 'SOC'});
 
@@ -25,14 +23,14 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   ScanSession get s => widget.session;
 
-  // Camera decoding runs wherever a backend is configured; if the platform
-  // has no camera / barcode support (e.g. desktop browsers without the
-  // BarcodeDetector API) we fall back to the simulated viewfinder.
+  // If the platform has no camera / barcode support (e.g. desktop browsers
+  // without the BarcodeDetector API), the static viewfinder renders and
+  // manual lookup + RFID stay available.
   bool _cameraFailed = false;
-  bool get _useCamera => repo.hasBackend && !_cameraFailed;
+  bool get _useCamera => !_cameraFailed;
   String? _lastToken;
   DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -42,7 +40,7 @@ class _ScanScreenState extends State<ScanScreen> {
   final _wedgeBuffer = StringBuffer();
 
   void _onWedgeKey(KeyEvent event) {
-    if (!repo.hasBackend || event is! KeyDownEvent) return;
+    if (event is! KeyDownEvent) return;
     if (event.logicalKey == LogicalKeyboardKey.enter) {
       final token = _wedgeBuffer.toString().trim();
       _wedgeBuffer.clear();
@@ -76,17 +74,40 @@ class _ScanScreenState extends State<ScanScreen> {
     _haptics();
   }
 
+  // Distinct haptic + sound per outcome (UX §6). SystemSound only offers
+  // click/alert, so the sounds are: accepted = click, duplicate = silence +
+  // medium haptic, unknown = alert-or-click + heavy haptic. Fully distinct
+  // custom audio assets are tracked in the known-gaps file.
   void _haptics() {
     switch (s.current?.result) {
       case ScanResult.success:
         HapticFeedback.lightImpact();
+        SystemSound.play(SystemSoundType.click);
       case ScanResult.duplicate:
         HapticFeedback.mediumImpact();
       case ScanResult.unknown:
         HapticFeedback.heavyImpact();
+        SystemSound.play(SystemSoundType.alert).catchError(
+            (_) => SystemSound.play(SystemSoundType.click));
       case null:
         break;
     }
+  }
+
+  /// The hidden RFID wedge input must silently regain focus after every
+  /// dialog, pushed screen, and app resume (UX §6).
+  void _refocusWedge() {
+    if (mounted) _wedgeFocus.requestFocus();
+  }
+
+  Future<void> _pushRefocusing(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    _refocusWedge();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refocusWedge();
   }
 
   static const _schoolNames = {
@@ -103,11 +124,13 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     s.addListener(_onSession);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     s.removeListener(_onSession);
     _wedgeFocus.dispose();
     super.dispose();
@@ -115,19 +138,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
   void _onSession() => setState(() {});
 
-  void _scan() {
-    s.simulateScan();
-    // Pair visual feedback with haptics on device (spec: haptic + sound).
-    _haptics();
-  }
-
   @override
   Widget build(BuildContext context) {
     final current = s.current;
     return Scaffold(
       body: KeyboardListener(
         focusNode: _wedgeFocus,
-        autofocus: repo.hasBackend,
+        autofocus: true,
         onKeyEvent: _onWedgeKey,
         child: Column(
         children: [
@@ -148,11 +165,14 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   Row(
                     children: [
-                      GestureDetector(
-                        onTap: () => Navigator.of(context).maybePop(),
-                        child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
+                      IconButton(
+                        tooltip: 'Back',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 2),
                       Expanded(
                         child: Text(
                           '${widget.school} — ${_schoolNames[widget.school] ?? ''}',
@@ -164,11 +184,16 @@ class _ScanScreenState extends State<ScanScreen> {
                     ],
                   ),
                   const SizedBox(height: 3),
+                  // Persistent header: event, window, live counts (UX §1)
                   Text(
                       s.eventName != null
                           ? '${s.eventName} · ${s.windowLine ?? ''}'
-                          : 'SG General Assembly · closes 8:15 AM',
+                          : 'No event selected',
                       style: T.ui(11.5, color: Colors.white.withOpacity(.9))),
+                  const SizedBox(height: 2),
+                  Text('${s.scanned} scanned · ${s.queued} pending sync',
+                      style: T.ui(10.5, weight: FontWeight.w700,
+                          color: Colors.white.withOpacity(.85))),
                   const SizedBox(height: 10),
                   // Time-in / Time-out segmented toggle
                   Container(
@@ -239,9 +264,8 @@ class _ScanScreenState extends State<ScanScreen> {
               children: [
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => ManualLookupScreen(
-                            school: widget.school, session: s))),
+                    onTap: () => _pushRefocusing(
+                        ManualLookupScreen(school: widget.school, session: s)),
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       decoration: BoxDecoration(
@@ -260,42 +284,21 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
           const Spacer(),
-          // With a live camera only Kiosk/Sync remain; the simulate button
-          // stands in for the decode stream everywhere else.
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
             child: Row(
               children: [
-                if (!_useCamera) ...[
-                  Expanded(
-                      child: PillButton(
-                          repo.hasBackend ? 'Scan next on roster ▸' : 'Simulate next scan ▸',
-                          onTap: _scan)),
-                  const SizedBox(width: 9),
-                  GhostButton('Kiosk', onTap: () {
-                    Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => KioskScreen(session: s, school: widget.school)));
+                Expanded(
+                  child: GhostButton('Kiosk mode', onTap: () {
+                    _pushRefocusing(KioskScreen(session: s, school: widget.school));
                   }),
-                  const SizedBox(width: 9),
-                  GhostButton('Sync', onTap: () {
-                    Navigator.of(context)
-                        .push(MaterialPageRoute(builder: (_) => SyncScreen(session: s)));
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: GhostButton('Sync status', onTap: () {
+                    _pushRefocusing(SyncScreen(session: s));
                   }),
-                ] else ...[
-                  Expanded(
-                    child: GhostButton('Kiosk mode', onTap: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => KioskScreen(session: s, school: widget.school)));
-                    }),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: GhostButton('Sync status', onTap: () {
-                      Navigator.of(context)
-                          .push(MaterialPageRoute(builder: (_) => SyncScreen(session: s)));
-                    }),
-                  ),
-                ],
+                ),
               ],
             ),
           ),
@@ -382,18 +385,31 @@ class _FeedbackCard extends StatelessWidget {
       fg = Colors.white;
       switch (record!.result) {
         case ScanResult.success:
+          if (record!.forReview) {
+            // Accepted late — clearly different BLUE state so checkers
+            // don't panic (UX §6).
+            bg = T.student;
+            glyph = '✓';
+            label = 'RECORDED — FOR REVIEW (${record!.lateMinutes} MIN LATE)';
+            name = record!.name;
+            meta = [if (record!.course?.isNotEmpty ?? false) record!.course, 'scanned ${record!.time}']
+                .whereType<String>().join(' · ');
+            sub = 'Accepted after the window — the event maker will review it';
+            break;
+          }
           bg = T.checker;
           glyph = '✓';
           label = timeIn ? 'TIME-IN RECORDED' : 'TIME-OUT RECORDED';
           name = record!.name;
-          meta = '${record!.course ?? 'BSIT 3-A'} · scanned ${record!.time}';
+          meta = [if (record!.course?.isNotEmpty ?? false) record!.course, 'scanned ${record!.time}']
+              .whereType<String>().join(' · ');
           sub = '${record!.time} · ${record!.method} · $school';
         case ScanResult.duplicate:
           bg = T.alert;
           glyph = '⟳';
-          label = 'ALREADY TIMED-IN';
+          label = timeIn ? 'ALREADY TIMED-IN' : 'ALREADY TIMED-OUT';
           name = record!.name;
-          meta = 'First scan ${record!.time} · $school · J. Ramos';
+          meta = 'Already recorded for this event · $school';
           sub = 'Blocked on-device against the cached roster';
         case ScanResult.unknown:
           bg = T.danger;

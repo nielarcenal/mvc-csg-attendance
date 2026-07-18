@@ -2,13 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/scan_store.dart';
 import '../widgets/viewfinder.dart';
 
 /// 5a — Kiosk mode: dark lock bar, full-height viewfinder, success card,
-/// exit = hold the lock 5s (+ checker PIN in production).
+/// exit = hold the lock for 5 seconds.
 class KioskScreen extends StatefulWidget {
   const KioskScreen({super.key, required this.session, this.school = 'SOC'});
 
@@ -28,7 +27,7 @@ class _KioskScreenState extends State<KioskScreen> {
 
   ScanSession get s => widget.session;
 
-  bool get _useCamera => repo.hasBackend && !_cameraFailed;
+  bool get _useCamera => !_cameraFailed;
 
   Future<void> _onDetect(BarcodeCapture capture) async {
     final value = capture.barcodes.firstOrNull?.rawValue;
@@ -58,7 +57,7 @@ class _KioskScreenState extends State<KioskScreen> {
   void _startHold() {
     setState(() => _holding = true);
     _holdTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) Navigator.of(context).maybePop(); // + checker PIN in production
+      if (mounted) Navigator.of(context).maybePop();
     });
   }
 
@@ -106,11 +105,12 @@ class _KioskScreenState extends State<KioskScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
                     decoration: BoxDecoration(
-                      color: T.checker.withOpacity(.25),
+                      color: (s.online ? T.checker : T.alert).withOpacity(.25),
                       borderRadius: BorderRadius.circular(99),
                     ),
-                    child: Text('● ONLINE',
-                        style: T.ui(10, weight: FontWeight.w800, color: const Color(0xFF8FE0B0))),
+                    child: Text(s.online ? '● ONLINE' : '● OFFLINE · ${s.queued} queued',
+                        style: T.ui(10, weight: FontWeight.w800,
+                            color: s.online ? const Color(0xFF8FE0B0) : const Color(0xFFF3C98B))),
                   ),
                 ],
               ),
@@ -121,7 +121,7 @@ class _KioskScreenState extends State<KioskScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(s.eventName ?? 'SG General Assembly', style: T.display(15)),
+                Text(s.eventName ?? 'No event selected', style: T.display(15)),
                 StatusChip.green(s.timeIn ? 'Time-in' : 'Time-out'),
               ],
             ),
@@ -149,13 +149,10 @@ class _KioskScreenState extends State<KioskScreen> {
                         },
                       ),
                     )
-                  : GestureDetector(
-                      onTap: s.simulateScan,
-                      child: const Viewfinder(
-                        caption: 'HOLD YOUR QR UP TO THE CAMERA',
-                        subCaption: 'RFID TAP ALSO WORKS',
-                        bracketSize: 28,
-                      ),
+                  : const Viewfinder(
+                      caption: 'CAMERA UNAVAILABLE',
+                      subCaption: 'RFID TAP STILL WORKS',
+                      bracketSize: 28,
                     ),
             ),
           ),
@@ -166,9 +163,11 @@ class _KioskScreenState extends State<KioskScreen> {
               duration: const Duration(milliseconds: 250),
               padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 15),
               decoration: BoxDecoration(
-                color: success || current == null
+                color: current == null
                     ? T.checker
-                    : (current.result == ScanResult.duplicate ? T.alert : T.danger),
+                    : success
+                        ? (current.forReview ? T.student : T.checker)
+                        : (current.result == ScanResult.duplicate ? T.alert : T.danger),
                 borderRadius: BorderRadius.circular(18),
                 boxShadow: [
                   BoxShadow(color: T.ink.withOpacity(.14), blurRadius: 24, offset: const Offset(0, 8)),
@@ -198,21 +197,21 @@ class _KioskScreenState extends State<KioskScreen> {
                       children: [
                         Text(
                           current == null || success
-                              ? (s.timeIn ? 'TIME-IN RECORDED' : 'TIME-OUT RECORDED')
+                              ? (success && current.forReview
+                                  ? 'RECORDED — FOR REVIEW (${current.lateMinutes} MIN LATE)'
+                                  : (s.timeIn ? 'TIME-IN RECORDED' : 'TIME-OUT RECORDED'))
                               : (current.result == ScanResult.duplicate
                                   ? 'ALREADY TIMED-IN'
                                   : 'NOT ON ROSTER'),
                           style: T.sectionLabel(color: Colors.white.withOpacity(.85), size: 9.5),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                            current?.name ??
-                                (repo.hasBackend ? 'Waiting for first scan' : 'Navarro, Ella P.'),
+                        Text(current?.name ?? 'Waiting for first scan',
                             style: T.display(19, color: Colors.white, height: 1.1),
                             overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
                         Text(
-                            '${current?.course ?? (repo.hasBackend ? 'Ready' : 'BSIT 4-A')} · scanned ${s.scanned} today',
+                            '${current?.course ?? 'Ready'} · ${s.scanned} scanned this event',
                             style: T.ui(11, color: Colors.white.withOpacity(.9))),
                       ],
                     ),
@@ -237,7 +236,7 @@ class _KioskScreenState extends State<KioskScreen> {
                         TextSpan(children: [
                           const TextSpan(text: 'Device is locked to this screen.\n'),
                           TextSpan(text: 'Exit:', style: T.ui(10.5, weight: FontWeight.w800, color: T.text2)),
-                          const TextSpan(text: ' hold the lock 5s + checker PIN'),
+                          const TextSpan(text: ' hold the lock for 5 seconds'),
                         ]),
                         style: T.ui(10.5, color: T.text2, height: 1.5),
                       ),

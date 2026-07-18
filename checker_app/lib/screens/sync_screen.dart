@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/scan_store.dart';
 
-/// 5a — Sync status: BACK ONLINE pill, upload progress, "safe to retry"
-/// note, per-scan rows (uploading / queued / merged / synced), Sync now.
-/// With a backend + session the rows are the real offline queue.
+/// 5a — Sync status: upload progress, "safe to retry" note, per-scan rows
+/// (uploading / queued / merged / synced), Sync now. The rows are the real
+/// offline queue of the active scan session; without a session the queue
+/// view is empty.
 class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key, this.session});
 
@@ -28,33 +28,26 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
     duration: const Duration(seconds: 1),
   )..repeat(reverse: true);
 
-  final _demoItems = [
-    _SyncItem('Chua, Marvin L.', 'in 7:58 AM · QR · SOC', SyncState.uploading),
-    _SyncItem('Torres, Miguel A.', 'in 7:56 AM · RFID · SOC', SyncState.queued),
-    _SyncItem('Garcia, Bea A.', 'in 7:12 AM · QR — also scanned by another checker',
-        SyncState.merged),
-    _SyncItem('Abella, Kristine M.', 'in 7:48 AM · QR · SOC', SyncState.synced),
-    _SyncItem('Bautista, Leo P.', 'in 7:52 AM · RFID · SOC', SyncState.synced),
-  ];
-  int _done = 3;
-  int _total = 14;
+  int _done = 0;
+  int _total = 0;
 
-  bool get _live => repo.hasBackend && widget.session != null;
+  ScanSession? get s => widget.session;
 
   @override
   void initState() {
     super.initState();
-    if (_live) {
-      _total = widget.session!.queue.length;
+    final session = s;
+    if (session != null) {
+      _total = session.queue.length;
       _done = 0;
-      widget.session!.addListener(_onSession);
+      session.addListener(_onSession);
     }
   }
 
   void _onSession() {
     if (!mounted) return;
     setState(() {
-      final remaining = widget.session!.queue
+      final remaining = s!.queue
           .where((q) => q.state == SyncState.queued || q.state == SyncState.uploading)
           .length;
       _done = (_total - remaining).clamp(0, _total);
@@ -62,7 +55,8 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
   }
 
   List<_SyncItem> get _items {
-    if (!_live) return _demoItems;
+    final session = s;
+    if (session == null) return const [];
     String nameOf(String studentId) =>
         roster.where((r) => r.id == studentId).firstOrNull?.name ?? 'Student';
     String clock(String iso) {
@@ -71,7 +65,7 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
       return '$h:${d.minute.toString().padLeft(2, '0')} ${d.hour < 12 ? 'AM' : 'PM'}';
     }
 
-    return widget.session!.queue
+    return session.queue
         .map((q) => _SyncItem(
               nameOf(q.studentId),
               '${q.scanType} ${clock(q.scannedAt)} · ${q.method.toUpperCase()} · ${q.school}',
@@ -82,28 +76,23 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
-    if (_live) widget.session!.removeListener(_onSession);
+    s?.removeListener(_onSession);
     _pulse.dispose();
     super.dispose();
   }
 
+  bool _syncing = false;
+
   Future<void> _syncNow() async {
-    if (_live) {
-      await widget.session!.flush();
-      return;
-    }
-    setState(() {
-      for (final i in _demoItems) {
-        if (i.state == SyncState.queued || i.state == SyncState.uploading) {
-          i.state = SyncState.synced;
-        }
-      }
-      _done = _total;
-    });
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    await s?.flush();
+    if (mounted) setState(() => _syncing = false);
   }
 
   @override
   Widget build(BuildContext context) {
+    final online = s?.online ?? true;
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -116,7 +105,10 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
                   const BackDot(),
                   const SizedBox(width: 12),
                   Expanded(child: Text('Sync status', style: T.display(20))),
-                  StatusChip.green('● BACK ONLINE'),
+                  if (online)
+                    StatusChip.green('● ONLINE')
+                  else
+                    StatusChip.orange('● OFFLINE'),
                 ],
               ),
             ),
@@ -155,9 +147,9 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(_live ? 'Client-generated IDs · idempotent' : 'Offline 7:04 – 8:02 AM',
+                            Text('Client-generated IDs · idempotent',
                                 style: T.ui(10, weight: FontWeight.w600, color: T.text2)),
-                            Text(_live ? '${_items.length} in queue' : 'Last sync 8:02:14 AM',
+                            Text('${_items.length} in queue',
                                 style: T.ui(10, weight: FontWeight.w600, color: T.text2)),
                           ],
                         ),
@@ -192,27 +184,27 @@ class _SyncScreenState extends State<SyncScreen> with SingleTickerProviderStateM
                     _row(item),
                     const SizedBox(height: 8),
                   ],
-                  if (_live && _items.isEmpty)
+                  if (_items.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 20),
                       child: Center(
-                        child: Text('Queue is clear — every scan is on the server.',
+                        child: Text(
+                            s == null
+                                ? 'No active scan session — open this from the scan screen to watch its queue.'
+                                : 'Queue is clear — every scan is on the server.',
+                            textAlign: TextAlign.center,
                             style: T.ui(11.5, color: T.muted)),
                       ),
                     ),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
-              child: Row(
-                children: [
-                  Expanded(child: PillButton('Sync now', onTap: () { _syncNow(); }, fontSize: 13)),
-                  const SizedBox(width: 9),
-                  const GhostButton('Auto: on'),
-                ],
+            if (s != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                child: PillButton(_syncing ? 'Syncing…' : 'Sync now',
+                    busy: _syncing, onTap: _syncNow, fontSize: 13),
               ),
-            ),
           ],
         ),
       ),

@@ -22,35 +22,43 @@ Future<void> initSupabase() async {
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
 }
 
-String checkerName = 'Joel Ramos';
+String checkerName = '';
 
-bool get isSignedIn => !hasBackend || client.auth.currentSession != null;
+bool get isSignedIn => hasBackend && client.auth.currentSession != null;
 
 Future<void> signOut() async {
   if (hasBackend) await client.auth.signOut();
 }
 
 /// Reloads profile + roster for a persisted session. Returns false when the
-/// stored session belongs to a non-checker account.
+/// stored session belongs to a non-checker account. Offline, it falls back
+/// to the persisted roster cache so scanning keeps working.
 Future<bool> restoreSession() async {
   final uid = client.auth.currentUser?.id;
   if (uid == null) return false;
-  final profile =
-      await client.from('profiles').select('full_name, role').eq('id', uid).single();
-  if (profile['role'] != 'checker' &&
-      profile['role'] != 'event_maker' &&
-      profile['role'] != 'super_admin') {
-    await client.auth.signOut();
-    return false;
+  try {
+    final profile =
+        await client.from('profiles').select('full_name, role').eq('id', uid).single();
+    if (profile['role'] != 'checker' &&
+        profile['role'] != 'event_maker' &&
+        profile['role'] != 'super_admin') {
+      await client.auth.signOut();
+      return false;
+    }
+    checkerName = profile['full_name'] as String;
+    await refreshRoster();
+  } catch (_) {
+    // Network unavailable — trust the stored session and the cached roster.
+    await restoreRoster();
   }
-  checkerName = profile['full_name'] as String;
-  await refreshRoster();
   return true;
 }
 
 /// Returns an error message, or null on success.
 Future<String?> signIn(String email, String password) async {
-  if (!hasBackend) return null;
+  if (!hasBackend) {
+    return 'App not configured — build with SUPABASE_URL and SUPABASE_ANON_KEY.';
+  }
   try {
     await client.auth.signInWithPassword(email: email, password: password);
     final profile = await client
@@ -83,6 +91,7 @@ class AssignedEvent {
     required this.windowLine,
     required this.school,
     required this.openNow,
+    required this.closesAt,
   });
 
   final String id;
@@ -92,6 +101,7 @@ class AssignedEvent {
   final String windowLine;
   final String school; // the school this checker covers (amendment #1)
   final bool openNow;
+  final DateTime closesAt; // checking window close — late scans go for review
 }
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -123,6 +133,7 @@ Future<List<AssignedEvent>> loadAssignments() async {
       windowLine: 'Check-in ${_time(opens)} – ${_time(closes)}',
       school: r['school'] as String,
       openNow: now.isAfter(opens) && now.isBefore(ends),
+      closesAt: closes,
     );
   }).toList()
     ..sort((a, b) => (b.openNow ? 1 : 0) - (a.openNow ? 1 : 0));
@@ -130,14 +141,21 @@ Future<List<AssignedEvent>> loadAssignments() async {
 }
 
 /// Downloads the full active roster into the local cache used for offline
-/// validation (spec §3.3).
+/// validation (spec §3.3) and persists it so it survives app restarts.
+/// Falls back to the persisted cache when the network is unavailable.
 Future<void> refreshRoster() async {
   if (!hasBackend) return;
-  final rows = List<Map<String, dynamic>>.from(await client
-      .from('students')
-      .select('id, student_no, full_name, course, year_level, section, qr_token, rfid_uid')
-      .eq('active', true)
-      .order('full_name'));
+  final List<Map<String, dynamic>> rows;
+  try {
+    rows = List<Map<String, dynamic>>.from(await client
+        .from('students')
+        .select('id, student_no, full_name, course, year_level, section, qr_token, rfid_uid')
+        .eq('active', true)
+        .order('full_name'));
+  } catch (_) {
+    await restoreRoster(); // offline — use the last cached roster
+    return;
+  }
   String initialsOf(String name) {
     final parts = name.replaceAll(',', '').split(RegExp(r'\s+'));
     return ((parts.isNotEmpty ? parts[0][0] : '') +
@@ -158,4 +176,6 @@ Future<void> refreshRoster() async {
             rfidUid: s['rfid_uid'] as String?,
           ))
       .toList();
+  rosterSyncedAt = DateTime.now();
+  await persistRoster();
 }

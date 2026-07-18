@@ -82,6 +82,7 @@ class _EventsScreenState extends State<EventsScreen> {
     if (today == null) return;
     _session.eventName = today.name;
     _session.windowLine = today.windowLine;
+    _session.checkingClosesAt = today.closesAt;
     await _session.startEvent(eventId: today.id, school: today.school);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
