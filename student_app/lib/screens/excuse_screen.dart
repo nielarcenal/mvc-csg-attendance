@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import '../data/demo_data.dart';
+import '../data/models.dart';
 import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 
@@ -16,16 +16,50 @@ class ExcuseScreen extends StatefulWidget {
 }
 
 class _ExcuseScreenState extends State<ExcuseScreen> {
-  final _reason = TextEditingController(
-      text: repo.hasBackend
-          ? ''
-          : 'I was confined at the campus clinic due to fever. Attached is my medical certificate signed by the school nurse.');
+  final _reason = TextEditingController();
   bool _submitted = false;
   bool _busy = false;
+  String? _reasonError; // inline under the field, not only a SnackBar (UX §3)
   final List<({String name, Uint8List bytes})> _attachments = [];
 
-  HistoryEntry? get _missed =>
-      historyEntries.where((h) => h.status == AttendanceStatus.absent).firstOrNull;
+  List<HistoryEntry> get _missedAll =>
+      historyEntries.where((h) => h.status == AttendanceStatus.absent).toList();
+  HistoryEntry? _selected;
+  HistoryEntry? get _missed => _selected ?? _missedAll.firstOrNull;
+
+  void _pickEvent() {
+    final options = _missedAll;
+    if (options.length < 2) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: T.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+              child: Text('Which event?', style: T.display(16)),
+            ),
+            for (final h in options)
+              ListTile(
+                title: Text(h.event, style: T.ui(13, weight: FontWeight.w700)),
+                subtitle: Text(h.line, style: T.ui(10.5, color: T.text2)),
+                trailing: _missed == h ? const Icon(Icons.check_rounded, size: 18) : null,
+                onTap: () {
+                  setState(() => _selected = h);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _pickPhoto() async {
     final picked = await ImagePicker()
@@ -38,13 +72,17 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
 
   Future<void> _submit() async {
     if (_busy || _submitted) return;
-    if (repo.hasBackend && _reason.text.trim().isEmpty) {
+    if (_missed == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please write a reason first.')),
+        const SnackBar(content: Text('No missed event to excuse.')),
       );
       return;
     }
-    setState(() => _busy = true);
+    if (_reason.text.trim().isEmpty) {
+      setState(() => _reasonError = 'A reason is required');
+      return;
+    }
+    setState(() { _busy = true; _reasonError = null; });
     String? err;
     final urls = <String>[];
     try {
@@ -54,7 +92,7 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
     } catch (e) {
       err = 'Could not upload attachment: $e';
     }
-    err ??= await repo.submitExcuse(null, _reason.text.trim(), attachmentUrls: urls);
+    err ??= await repo.submitExcuse(_missed?.eventId, _reason.text.trim(), attachmentUrls: urls);
     if (!mounted) return;
     setState(() { _busy = false; _submitted = err == null; });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -103,20 +141,27 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(_missed?.event ?? 'Community Cleanup',
-                                    style: T.ui(14, weight: FontWeight.w700)),
-                                const SizedBox(height: 1),
-                                Text(
-                                    _missed != null
-                                        ? '${_missed!.line}${_missed!.fine != null ? ' · ${_missed!.fine}' : ''}'
-                                        : 'Jul 8, 2026 · marked absent · ₱50 fine pending',
-                                    style: T.ui(10.5, color: T.text2)),
-                              ],
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_missed?.event ?? 'No missed events',
+                                      style: T.ui(14, weight: FontWeight.w700)),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                      _missed != null
+                                          ? '${_missed!.line}${_missed!.fine != null ? ' · ${_missed!.fine}' : ''}'
+                                          : 'You have nothing to excuse right now.',
+                                      style: T.ui(10.5, color: T.text2)),
+                                ],
+                              ),
                             ),
-                            Text('Change ▾', style: T.ui(11, weight: FontWeight.w700, color: T.accentDeep)),
+                            if (_missedAll.length > 1)
+                              GestureDetector(
+                                onTap: _pickEvent,
+                                child: Text('Change ▾',
+                                    style: T.ui(11, weight: FontWeight.w700, color: T.accentDeep)),
+                              ),
                           ],
                         ),
                       ],
@@ -132,14 +177,18 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                         const SizedBox(height: 8),
                         Container(
                           decoration: BoxDecoration(
-                            border: Border.all(color: T.hairline, width: 1.5),
+                            border: Border.all(
+                                color: _reasonError != null ? T.danger : T.hairline,
+                                width: 1.5),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: TextField(
                             controller: _reason,
                             maxLines: 4,
                             maxLength: 500,
-                            onChanged: (_) => setState(() {}),
+                            onChanged: (_) => setState(() {
+                              if (_reason.text.trim().isNotEmpty) _reasonError = null;
+                            }),
                             style: T.ui(12.5, height: 1.5),
                             decoration: const InputDecoration(
                               border: InputBorder.none,
@@ -149,10 +198,15 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Text('${_reason.text.length} / 500',
-                              style: T.ui(9.5, color: T.muted)),
+                        Row(
+                          children: [
+                            if (_reasonError != null)
+                              Text(_reasonError!,
+                                  style: T.ui(10.5, weight: FontWeight.w600, color: T.dangerDeep)),
+                            const Spacer(),
+                            Text('${_reason.text.length} / 500',
+                                style: T.ui(9.5, color: T.muted)),
+                          ],
                         ),
                       ],
                     ),
@@ -226,7 +280,7 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Text(
-                      'Reviewed by the event maker within 3 school days. If approved, the absence is excused and the ₱50 fine is waived.',
+                      'Reviewed by the event maker within 3 school days. If approved, the absence is excused and the fine is waived.',
                       style: T.ui(10.5, color: T.text2, height: 1.5),
                     ),
                   ),
@@ -234,6 +288,7 @@ class _ExcuseScreenState extends State<ExcuseScreen> {
                   PillButton(
                       _submitted ? 'Submitted ✓' : (_busy ? 'Submitting…' : 'Submit excuse'),
                       color: _submitted ? T.checker : T.accent,
+                      busy: _busy,
                       onTap: _submit),
                   for (final x in excuseRecords) ...[
                     const SizedBox(height: 12),

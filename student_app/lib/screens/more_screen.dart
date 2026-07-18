@@ -1,17 +1,33 @@
 import 'package:flutter/material.dart';
 import '../data/live_repo.dart' as repo;
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/models.dart';
 import 'history_screen.dart';
 import 'fines_screen.dart';
 import 'notifications_screen.dart';
 import 'excuse_screen.dart';
 import 'login_screen.dart';
 
-/// "More" tab — not a designed screen; a simple campus-style menu that links
-/// to Attendance history, Fines, Notifications and the Excuse form.
+/// Profile tab (UX §1) — identity card plus links to Attendance history,
+/// Fines, Notifications and the Excuse form; Sign out at the bottom.
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
+
+  Future<void> _confirmSignOut(BuildContext context) async {
+    final ok = await confirmDialog(
+      context,
+      title: 'Sign out?',
+      body: "You'll need your password to sign back in.",
+      confirmLabel: 'Sign out',
+    );
+    if (!ok || !context.mounted) return;
+    await repo.signOut();
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +37,7 @@ class MoreScreen extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-            child: Text('More', style: T.display(24)),
+            child: Text('Profile', style: T.display(24)),
           ),
           Expanded(
             child: ListView(
@@ -42,8 +58,7 @@ class MoreScreen extends StatelessWidget {
                         ),
                         child: CircleAvatar(
                           backgroundColor: T.hairline2,
-                          child: Text(
-                              demoStudent.fullName.trim().split(RegExp(r'\s+')).map((w) => w[0]).take(2).join().toUpperCase(),
+                          child: Text(currentStudent.initials,
                               style: T.ui(12, weight: FontWeight.w800, color: T.muted)),
                         ),
                       ),
@@ -51,9 +66,9 @@ class MoreScreen extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(demoStudent.fullName, style: T.display(15)),
+                          Text(currentStudent.fullName, style: T.display(15)),
                           const SizedBox(height: 2),
-                          Text('${demoStudent.studentNo} · ${demoStudent.course}',
+                          Text('${currentStudent.studentNo} · ${currentStudent.course}',
                               style: T.ui(11, color: T.text2)),
                         ],
                       ),
@@ -73,14 +88,7 @@ class MoreScreen extends StatelessWidget {
                 _item(context, Icons.edit_document, T.alert, T.alertDeep, 'File an excuse',
                     'For a missed event', const ExcuseScreen()),
                 const SizedBox(height: 18),
-                GhostButton('Sign out', onTap: () async {
-                  await repo.signOut();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                    (_) => false,
-                  );
-                }),
+                GhostButton('Sign out', onTap: () => _confirmSignOut(context)),
               ],
             ),
           ),

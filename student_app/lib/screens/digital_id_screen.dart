@@ -1,13 +1,12 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/live_repo.dart' as repo;
+import '../data/models.dart';
 
-/// 1b — Digital ID: official-ID card with the rotating QR (30s TOTP-style
-/// refresh while online, static fallback offline). The QR encodes the
-/// rotating `qr_token`, never the student number.
+/// 1b — Digital ID: official-ID card with the student's QR. The QR encodes
+/// the locally cached `qr_token` (never the student number), so it renders
+/// fully offline.
 class DigitalIdScreen extends StatefulWidget {
   const DigitalIdScreen({super.key});
 
@@ -15,27 +14,11 @@ class DigitalIdScreen extends StatefulWidget {
   State<DigitalIdScreen> createState() => _DigitalIdScreenState();
 }
 
-class _DigitalIdScreenState extends State<DigitalIdScreen>
-    with SingleTickerProviderStateMixin {
-  static const _period = Duration(seconds: 30);
-  late final AnimationController _cycle =
-      AnimationController(vsync: this, duration: _period)
-        ..addStatusListener((status) {
-          if (status == AnimationStatus.completed) {
-            setState(() => _epoch++); // rotate the token
-            _cycle.forward(from: 0);
-          }
-        })
-        ..forward();
-  int _epoch = 0;
+class _DigitalIdScreenState extends State<DigitalIdScreen> {
 
-  /// Rotating payload — in production a TOTP derived from `qr_token`.
-  String get _payload => '${demoStudent.qrToken}:$_epoch';
-
-  @override
-  void dispose() {
-    _cycle.dispose();
-    super.dispose();
+  Future<void> _refresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* keep last loaded data */}
+    if (mounted) setState(() {});
   }
 
   @override
@@ -55,7 +38,11 @@ class _DigitalIdScreenState extends State<DigitalIdScreen>
             ),
           ),
           Expanded(
-            child: ListView(
+            child: RefreshIndicator(
+              color: T.accent,
+              onRefresh: _refresh,
+              child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
               children: [
                 Container(
@@ -75,49 +62,31 @@ class _DigitalIdScreenState extends State<DigitalIdScreen>
                           border: Border.all(color: T.accent, width: 2.5),
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: QrImageView(
-                          data: _payload,
-                          version: QrVersions.auto,
-                          size: 206,
-                          gapless: true,
-                          eyeStyle: const QrEyeStyle(
-                              eyeShape: QrEyeShape.square, color: T.ink),
-                          dataModuleStyle: const QrDataModuleStyle(
-                              dataModuleShape: QrDataModuleShape.square, color: T.ink),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Countdown pill with conic ring
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: T.tint(T.accent, .1),
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            AnimatedBuilder(
-                              animation: _cycle,
-                              builder: (_, __) => CustomPaint(
-                                size: const Size(16, 16),
-                                painter: _RingPainter(1 - _cycle.value),
+                        child: currentStudent.qrToken.isEmpty
+                            ? SizedBox(
+                                width: 206,
+                                height: 206,
+                                child: Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(20),
+                                    child: Text(
+                                      'No QR token on your record yet — ask the SG office to link your student number.',
+                                      textAlign: TextAlign.center,
+                                      style: T.ui(12, color: T.text2, height: 1.5),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : QrImageView(
+                                data: currentStudent.qrToken,
+                                version: QrVersions.auto,
+                                size: 206,
+                                gapless: true,
+                                eyeStyle: const QrEyeStyle(
+                                    eyeShape: QrEyeShape.square, color: T.ink),
+                                dataModuleStyle: const QrDataModuleStyle(
+                                    dataModuleShape: QrDataModuleShape.square, color: T.ink),
                               ),
-                            ),
-                            const SizedBox(width: 7),
-                            AnimatedBuilder(
-                              animation: _cycle,
-                              builder: (_, __) {
-                                final left =
-                                    (_period.inSeconds * (1 - _cycle.value)).ceil();
-                                return Text(
-                                  'Refreshes in 0:${left.toString().padLeft(2, '0')}',
-                                  style: T.ui(11, weight: FontWeight.w600, color: T.accentDeep),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
                       ),
                       const SizedBox(height: 12),
                       // Photo + identity
@@ -135,16 +104,17 @@ class _DigitalIdScreenState extends State<DigitalIdScreen>
                             ),
                             child: CircleAvatar(
                               backgroundColor: T.hairline2,
-                              child: Text('JD', style: T.ui(14, weight: FontWeight.w800, color: T.muted)),
+                              child: Text(currentStudent.initials,
+                                  style: T.ui(14, weight: FontWeight.w800, color: T.muted)),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(demoStudent.fullName, style: T.display(19)),
+                              Text(currentStudent.fullName, style: T.display(19)),
                               const SizedBox(height: 3),
-                              Text('${demoStudent.studentNo} · ${demoStudent.course}',
+                              Text('${currentStudent.studentNo} · ${currentStudent.course}',
                                   style: T.ui(12, color: T.text2)),
                             ],
                           ),
@@ -155,65 +125,48 @@ class _DigitalIdScreenState extends State<DigitalIdScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           StatusChip.green('✓ Works offline', fontSize: 10.5),
-                          const SizedBox(width: 8),
-                          StatusChip.blue('Brightness up', fontSize: 10.5),
                         ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                // Next event card
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-                  decoration: BoxDecoration(
-                    color: T.accent,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('TOMORROW · 7:00 AM · MVC GYM',
-                          style: T.sectionLabel(color: Colors.white.withOpacity(.85), size: 10)),
-                      const SizedBox(height: 3),
-                      Text('SG General Assembly', style: T.display(16, color: Colors.white)),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(.22),
-                          borderRadius: BorderRadius.circular(99),
+                // Next event card — real hero event only.
+                if (heroEvent != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                    decoration: BoxDecoration(
+                      color: T.accent,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(heroEvent!.label.toUpperCase(),
+                            style: T.sectionLabel(color: Colors.white.withOpacity(.85), size: 10)),
+                        const SizedBox(height: 3),
+                        Text(heroEvent!.name, style: T.display(16, color: Colors.white)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(.22),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(
+                              '${heroEvent!.isRequired ? 'Required' : 'Optional'} · ${heroEvent!.line}',
+                              style: T.ui(10.5, weight: FontWeight.w700, color: Colors.white)),
                         ),
-                        child: Text('Required · check-in 7:00–8:15',
-                            style: T.ui(10.5, weight: FontWeight.w700, color: Colors.white)),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
-
-/// Conic countdown ring (blue arc over a faint track).
-class _RingPainter extends CustomPainter {
-  _RingPainter(this.fraction);
-
-  final double fraction;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final track = Paint()..color = T.accent.withOpacity(.18);
-    canvas.drawOval(rect, track);
-    final arc = Paint()..color = T.accent;
-    canvas.drawArc(rect, -math.pi / 2, 2 * math.pi * fraction, true, arc);
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) => old.fraction != fraction;
 }

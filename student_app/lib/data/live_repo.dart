@@ -3,13 +3,14 @@
 /// Configure at build/run time:
 ///   flutter run --dart-define=SUPABASE_URL=https://xxx.supabase.co \
 ///               --dart-define=SUPABASE_ANON_KEY=eyJ...
-/// Without the defines the app stays in demo mode (demo_data.dart).
+/// Without the defines the app refuses to sign in — it never renders
+/// sample data (CLAUDE.md hard rule 1).
 library;
 
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'demo_data.dart';
+import 'models.dart';
 
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
@@ -26,7 +27,9 @@ Future<void> initSupabase() async {
 
 /// Returns an error message, or null on success.
 Future<String?> signIn(String email, String password) async {
-  if (!hasBackend) return null;
+  if (!hasBackend) {
+    return 'App not configured — build with SUPABASE_URL and SUPABASE_ANON_KEY.';
+  }
   try {
     await _db.auth.signInWithPassword(email: email, password: password);
     await refreshAll();
@@ -38,7 +41,7 @@ Future<String?> signIn(String email, String password) async {
   }
 }
 
-bool get isSignedIn => !hasBackend || _db.auth.currentSession != null;
+bool get isSignedIn => hasBackend && _db.auth.currentSession != null;
 
 Future<void> signOut() async {
   if (hasBackend) await _db.auth.signOut();
@@ -75,7 +78,7 @@ Future<void> refreshAll() async {
   final firstName = fullName.contains(',')
       ? fullName.split(',').last.trim().split(' ').first
       : fullName.split(' ').first;
-  demoStudent = Student(
+  currentStudent = Student(
     fullName: fullName.contains(',')
         ? '${fullName.split(',').last.trim()} ${fullName.split(',').first.trim()}'
         : fullName,
@@ -137,6 +140,8 @@ Future<void> refreshAll() async {
   final upcoming = events.where((e) => ts(e, 'ends_at').isAfter(now)).toList();
   upcomingEvents = upcoming.map((e) {
     final starts = ts(e, 'starts_at');
+    final opens = ts(e, 'checking_opens_at');
+    final closes = ts(e, 'checking_closes_at');
     final rsvp = rsvps.where((r) => r['event_id'] == e['id']).toList();
     final isRequired = e['is_required'] as bool;
     return EventItem(
@@ -148,6 +153,8 @@ Future<void> refreshAll() async {
       dayTile: starts.day.toString().padLeft(2, '0'),
       day: starts.day,
       venue: (e['venue'] ?? '') as String,
+      windowLine: '${_date(starts)} · check-in ${_time(opens)} – ${_time(closes)}',
+      closeLabel: _time(closes),
       required: isRequired,
       rsvpOpen: !isRequired && rsvp.isEmpty,
       going: rsvp.isEmpty ? null : rsvp.first['going'] as bool,
@@ -195,6 +202,7 @@ Future<void> refreshAll() async {
           ? ''
           : ' → out ${_time(DateTime.parse(outScan.first['scanned_at'] as String))}';
       return HistoryEntry(
+        eventId: id as String,
         event: e['name'] as String,
         line: '$when · in $inAt$outPart · ${(s['method'] as String).toUpperCase()} · ${s['school']}',
         status: AttendanceStatus.present,
@@ -202,6 +210,7 @@ Future<void> refreshAll() async {
     }
     if (excuse.any((x) => x['status'] == 'approved')) {
       return HistoryEntry(
+        eventId: id as String,
         event: e['name'] as String,
         line: '$when · excuse approved',
         status: AttendanceStatus.excused,
@@ -209,6 +218,7 @@ Future<void> refreshAll() async {
     }
     if (!(e['is_required'] as bool)) {
       return HistoryEntry(
+        eventId: id as String,
         event: e['name'] as String,
         line: '$when · optional · no scan',
         status: AttendanceStatus.upcoming,
@@ -218,6 +228,7 @@ Future<void> refreshAll() async {
         ? null
         : '₱${(fine.first['amount'] as num).toStringAsFixed(0)} fine · ${fine.first['status']}';
     return HistoryEntry(
+      eventId: id as String,
       event: e['name'] as String,
       line: '$when · no scan recorded',
       status: AttendanceStatus.absent,
@@ -379,7 +390,7 @@ Future<String> uploadExcuseAttachment(Uint8List bytes, String filename) async {
 
 Future<String?> submitExcuse(String? eventId, String reason,
     {List<String> attachmentUrls = const []}) async {
-  if (!hasBackend) return null;
+  if (!hasBackend) return 'App not configured.';
   try {
     final student = await _db
         .from('students')
@@ -393,13 +404,8 @@ Future<String?> submitExcuse(String? eventId, String reason,
           .where((h) => h.status == AttendanceStatus.absent)
           .toList();
       if (absent.isEmpty) return 'No missed event to excuse.';
-      final events = List<Map<String, dynamic>>.from(await _db
-          .from('events')
-          .select('id, name')
-          .eq('name', absent.first.event)
-          .limit(1));
-      if (events.isEmpty) return 'Could not find the event.';
-      targetEvent = events.first['id'] as String;
+      targetEvent = absent.first.eventId;
+      if (targetEvent == null) return 'Could not find the event.';
     }
     await _db.from('excuses').insert({
       'student_id': student['id'],

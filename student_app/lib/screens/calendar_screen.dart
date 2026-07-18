@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../data/demo_data.dart';
+import '../data/live_repo.dart' as repo;
+import '../data/models.dart';
 import '../theme.dart';
 import 'event_detail_screen.dart';
 
@@ -21,6 +22,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
+
+
+  Future<void> _refresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* keep last loaded data */}
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -52,9 +59,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _openEvent(CalendarEvent e) {
     if (e.status != CalStatus.upcoming) return;
-    final item = upcomingEvents.where((u) => u.id != null && u.id == e.id).toList();
+    final item = upcomingEvents.where((u) => u.id != null && u.id == e.id).firstOrNull;
+    if (item == null) return;
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => EventDetailScreen(event: item.isEmpty ? null : item.first),
+      builder: (_) => EventDetailScreen(event: item),
     ));
   }
 
@@ -97,7 +105,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ),
           ),
           Expanded(
-            child: ListView(
+            child: RefreshIndicator(
+              color: T.accent,
+              onRefresh: _refresh,
+              child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               children: [
                 if (_monthView) ...[
@@ -163,6 +175,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     ),
                   ),
               ],
+              ),
             ),
           ),
         ],

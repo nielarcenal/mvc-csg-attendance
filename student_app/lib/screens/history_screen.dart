@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import '../data/live_repo.dart' as repo;
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/live_repo.dart' as repo;
+import '../data/models.dart';
 import 'excuse_screen.dart';
 
 /// 2a — Attendance history: semester ring (92%), status chips, filter pills,
@@ -17,6 +17,12 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   String _filter = 'All';
+
+  Future<void> _refresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* keep last loaded data */}
+    if (mounted) setState(() {});
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +55,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: RefreshIndicator(
+                color: T.accent,
+                onRefresh: _refresh,
+                child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
                 children: [
                   _summaryCard(),
@@ -63,11 +73,23 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
+                  if (entries.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 18),
+                      child: Center(
+                        child: Text(
+                            historyEntries.isEmpty
+                                ? 'No past events yet — your record starts with the first event.'
+                                : 'Nothing matches this filter.',
+                            style: T.ui(11.5, color: T.muted)),
+                      ),
+                    ),
                   for (final e in entries) ...[
                     _historyCard(e),
                     const SizedBox(height: 9),
                   ],
                 ],
+                ),
               ),
             ),
           ],
@@ -76,25 +98,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  /// Semester summary: real counts in live mode, the design mock otherwise.
+  /// Semester summary — real aggregate over this student's history.
   Widget _summaryCard() {
-    final int present, excused, absent;
-    final double fraction;
-    final String headline;
-    if (repo.hasBackend) {
-      present = historyEntries.where((e) => e.status == AttendanceStatus.present).length;
-      excused = historyEntries.where((e) => e.status == AttendanceStatus.excused).length;
-      absent = historyEntries.where((e) => e.status == AttendanceStatus.absent).length;
-      final required = present + excused + absent;
-      fraction = required == 0 ? 1 : (present + excused) / required;
-      headline = required == 0
-          ? 'No required events yet'
-          : '${present + excused} of $required required events attended';
-    } else {
-      present = 23; excused = 1; absent = 1;
-      fraction = .92;
-      headline = '23 of 25 required events attended';
-    }
+    final present = historyEntries.where((e) => e.status == AttendanceStatus.present).length;
+    final excused = historyEntries.where((e) => e.status == AttendanceStatus.excused).length;
+    final absent = historyEntries.where((e) => e.status == AttendanceStatus.absent).length;
+    final required = present + excused + absent;
+    final fraction = required == 0 ? 1.0 : (present + excused) / required;
+    final headline = required == 0
+        ? 'No required events yet'
+        : '${present + excused} of $required required events attended';
     final pct = (fraction * 100).round();
     return CampusCard(
       radius: 20,
@@ -125,7 +138,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   runSpacing: 4,
                   children: [
                     StatusChip.green('$present present', fontSize: 9.5),
-                    StatusChip.orange('$excused excused', fontSize: 9.5),
+                    StatusChip.blue('$excused excused', fontSize: 9.5),
                     StatusChip.red('$absent absent', fontSize: 9.5),
                   ],
                 ),
@@ -161,7 +174,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _historyCard(HistoryEntry e) {
     final chip = switch (e.status) {
       AttendanceStatus.present => StatusChip.green('Present'),
-      AttendanceStatus.excused => StatusChip.orange('Excused ✓'),
+      AttendanceStatus.excused => StatusChip.blue('Excused ✓'),
       _ => StatusChip.red('Absent'),
     };
     return CampusCard(

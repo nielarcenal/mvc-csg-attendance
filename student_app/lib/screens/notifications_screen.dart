@@ -1,18 +1,37 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/live_repo.dart' as repo;
+import '../data/models.dart';
 import 'excuse_screen.dart';
 
 /// 4c — Notifications: Today/Earlier groups; attendance recorded (green ✓),
 /// reminder (blue ▸), marked absent (red !, with excuse chip),
 /// announcement (purple ◎); unread = blue dot, read = 75% opacity.
-class NotificationsScreen extends StatelessWidget {
+class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+
+  Future<void> _refresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* keep last loaded data */}
+    if (mounted) setState(() {});
+  }
+
+  void _markAllRead() {
+    setState(() {
+      notifications = notifications.map((n) => n.asRead()).toList();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final today = notifications.where((n) => n.today).toList();
     final earlier = notifications.where((n) => !n.today).toList();
+    final hasUnread = notifications.any((n) => n.unread);
 
     return Scaffold(
       body: SafeArea(
@@ -26,25 +45,48 @@ class NotificationsScreen extends StatelessWidget {
                   const BackDot(),
                   const SizedBox(width: 12),
                   Expanded(child: Text('Notifications', style: T.display(20))),
-                  Text('Mark all read', style: T.ui(11, weight: FontWeight.w700, color: T.accentDeep)),
+                  if (hasUnread)
+                    GestureDetector(
+                      onTap: _markAllRead,
+                      child: Text('Mark all read',
+                          style: T.ui(11, weight: FontWeight.w700, color: T.accentDeep)),
+                    ),
                 ],
               ),
             ),
             Expanded(
-              child: ListView(
+              child: RefreshIndicator(
+                color: T.accent,
+                onRefresh: _refresh,
+                child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(2, 4, 0, 9),
-                    child: Text('TODAY', style: T.sectionLabel(size: 10)),
-                  ),
-                  for (final n in today) ...[_tile(context, n), const SizedBox(height: 9)],
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(2, 6, 0, 9),
-                    child: Text('EARLIER', style: T.sectionLabel(size: 10)),
-                  ),
-                  for (final n in earlier) ...[_tile(context, n), const SizedBox(height: 9)],
+                  if (notifications.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 30),
+                      child: Center(
+                        child: Text('Nothing here yet — updates about your attendance appear here.',
+                            textAlign: TextAlign.center,
+                            style: T.ui(11.5, color: T.muted)),
+                      ),
+                    ),
+                  if (today.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(2, 4, 0, 9),
+                      child: Text('TODAY', style: T.sectionLabel(size: 10)),
+                    ),
+                    for (final n in today) ...[_tile(context, n), const SizedBox(height: 9)],
+                  ],
+                  if (earlier.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(2, 6, 0, 9),
+                      child: Text('EARLIER', style: T.sectionLabel(size: 10)),
+                    ),
+                    for (final n in earlier) ...[_tile(context, n), const SizedBox(height: 9)],
+                  ],
                 ],
+                ),
               ),
             ),
           ],

@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/live_repo.dart' as repo;
+import '../data/models.dart';
 import 'excuse_screen.dart';
 
 /// 6a — Fines tracker: dark balance card, Paid/Waived/Unpaid tiles,
 /// history cards, auto-waive explainer.
-class FinesScreen extends StatelessWidget {
+class FinesScreen extends StatefulWidget {
   const FinesScreen({super.key});
+
+  @override
+  State<FinesScreen> createState() => _FinesScreenState();
+}
+
+class _FinesScreenState extends State<FinesScreen> {
+
+  Future<void> _refresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* keep last loaded data */}
+    if (mounted) setState(() {});
+  }
 
   double _sum(String tone) => fineEntries
       .where((f) => f.tone == tone)
@@ -32,7 +44,11 @@ class FinesScreen extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: RefreshIndicator(
+                color: T.accent,
+                onRefresh: _refresh,
+                child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
                 children: [
                   // Dark balance card
@@ -60,37 +76,26 @@ class FinesScreen extends StatelessWidget {
                                 ? 'All clear · S.Y. 2026–27'
                                 : '$unpaidCount unexcused absence${unpaidCount == 1 ? '' : 's'} · S.Y. 2026–27',
                             style: T.ui(11, color: Colors.white.withOpacity(.75))),
+                        const SizedBox(height: 6),
+                        Text('Fines are settled in person at the SG office.',
+                            style: T.ui(10, color: Colors.white.withOpacity(.6))),
                         const SizedBox(height: 13),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 9),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(99),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text('Pay at SG office',
-                                    style: T.ui(11.5, weight: FontWeight.w800)),
+                        if (unpaid > 0)
+                          GestureDetector(
+                            onTap: () => Navigator.of(context)
+                                .push(MaterialPageRoute(builder: (_) => const ExcuseScreen())),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 9),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(99),
                               ),
+                              alignment: Alignment.center,
+                              child: Text('File an excuse',
+                                  style: T.ui(11.5, weight: FontWeight.w800)),
                             ),
-                            const SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: () => Navigator.of(context)
-                                  .push(MaterialPageRoute(builder: (_) => const ExcuseScreen())),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.white.withOpacity(.4), width: 1.5),
-                                  borderRadius: BorderRadius.circular(99),
-                                ),
-                                child: Text('File excuse',
-                                    style: T.ui(11.5, weight: FontWeight.w700, color: Colors.white)),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
                       ],
                     ),
                   ),
@@ -110,6 +115,14 @@ class FinesScreen extends StatelessWidget {
                     child: Text('HISTORY', style: T.sectionLabel(size: 10)),
                   ),
                   const SizedBox(height: 8),
+                  if (fineEntries.isEmpty)
+                    CampusCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 16),
+                      child: Center(
+                        child: Text('No fines on record — keep it up!',
+                            style: T.ui(11.5, color: T.muted)),
+                      ),
+                    ),
                   for (final f in fineEntries) ...[
                     CampusCard(
                       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
@@ -143,6 +156,7 @@ class FinesScreen extends StatelessWidget {
                     ),
                   ),
                 ],
+                ),
               ),
             ),
           ],

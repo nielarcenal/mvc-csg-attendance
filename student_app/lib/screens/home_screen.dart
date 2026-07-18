@@ -1,15 +1,27 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
-import '../data/demo_data.dart';
+import '../data/models.dart';
+import '../data/live_repo.dart' as repo;
 import 'event_detail_screen.dart';
 
 /// 2a — Home: date + greeting, blue hero card for the next required event,
-/// Upcoming list, Announcements.
-class HomeScreen extends StatelessWidget {
+/// Upcoming list, Announcements. Pull-to-refresh refetches everything;
+/// a failed refresh surfaces an error banner with Retry (UX §5).
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.onOpenId, required this.onOpenCalendar});
 
   final VoidCallback onOpenId;
   final VoidCallback onOpenCalendar;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _refreshFailed = false;
+
+  VoidCallback get onOpenId => widget.onOpenId;
+  VoidCallback get onOpenCalendar => widget.onOpenCalendar;
 
   static const _weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -17,6 +29,15 @@ class HomeScreen extends StatelessWidget {
   String get _today {
     final now = DateTime.now();
     return '${_weekdays[now.weekday - 1]}, ${_months[now.month - 1]} ${now.day}';
+  }
+
+  Future<void> _refresh() async {
+    try {
+      await repo.refreshAll();
+      if (mounted) setState(() => _refreshFailed = false);
+    } catch (_) {
+      if (mounted) setState(() => _refreshFailed = true);
+    }
   }
 
   @override
@@ -35,7 +56,7 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     Text(_today, style: T.ui(11.5, weight: FontWeight.w600, color: T.text2)),
                     const SizedBox(height: 1),
-                    Text('Hi, ${demoStudent.firstName}', style: T.display(24)),
+                    Text('Hi, ${currentStudent.firstName}', style: T.display(24)),
                   ],
                 ),
                 ClipOval(child: Image.asset('assets/sg-logo.png', width: 30, height: 30)),
@@ -43,9 +64,33 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: ListView(
+            child: RefreshIndicator(
+              color: T.accent,
+              onRefresh: _refresh,
+              child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
               children: [
+                if (_refreshFailed) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: T.tint(T.danger, .1),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text('Could not refresh — showing the last loaded data.',
+                              style: T.ui(11, weight: FontWeight.w600, color: T.dangerDeep)),
+                        ),
+                        OutlineChip('Retry', color: T.danger, textColor: T.dangerDeep,
+                            onTap: _refresh),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 // Hero card — next required event
                 if (heroEvent != null)
                 Container(
@@ -101,13 +146,15 @@ class HomeScreen extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           GestureDetector(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => EventDetailScreen(
-                                event: upcomingEvents
-                                    .where((e) => e.id != null && e.id == heroEvent?.id)
-                                    .firstOrNull,
-                              )),
-                            ),
+                            onTap: () {
+                              final item = upcomingEvents
+                                  .where((e) => e.id != null && e.id == heroEvent?.id)
+                                  .firstOrNull;
+                              if (item == null) return;
+                              Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => EventDetailScreen(event: item)),
+                              );
+                            },
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                               decoration: BoxDecoration(
@@ -136,6 +183,14 @@ class HomeScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 9),
+                if (upcomingEvents.isEmpty)
+                  CampusCard(
+                    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 16),
+                    child: Center(
+                      child: Text('No upcoming events yet',
+                          style: T.ui(11.5, color: T.muted)),
+                    ),
+                  ),
                 for (final e in upcomingEvents) ...[
                   CampusCard(
                     padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
@@ -199,6 +254,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ],
               ],
+              ),
             ),
           ),
         ],
