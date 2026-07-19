@@ -11,11 +11,27 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 // FEATURE_BATCH_2 §B: long names scale down gradually instead of wrapping
-// or overflowing the card. ~19 chars fit at full size in the card's text
-// column; beyond that the font shrinks proportionally, floored at 6px.
+// or overflowing the card. ~17 chars are guaranteed to fit at full size in
+// the card's text column (wide glyphs included); beyond that the font
+// shrinks proportionally, floored at 6px.
 function nameFontSize(name: string): number {
   const longest = Math.max(...name.split('\n').map((l) => l.length), 1);
-  return Math.max(6, Math.min(10.5, (10.5 * 19) / longest));
+  return Math.max(6, Math.min(10.5, (10.5 * 17) / longest));
+}
+
+// A line past ~33 chars can't fit even at the 6px floor and would soft-wrap
+// unpredictably — give it one deliberate break at the space nearest its
+// middle instead, so both halves scale to a readable size.
+function fitName(name: string): string {
+  return name.split('\n').map((line) => {
+    if (line.length <= 33) return line;
+    const mid = line.length / 2;
+    let best = -1;
+    for (let i = line.indexOf(' '); i !== -1; i = line.indexOf(' ', i + 1)) {
+      if (best === -1 || Math.abs(i - mid) < Math.abs(best - mid)) best = i;
+    }
+    return best === -1 ? line : line.slice(0, best) + '\n' + line.slice(best + 1);
+  }).join('\n');
 }
 
 export default function BatchQr() {
@@ -43,7 +59,7 @@ export default function BatchQr() {
     const photo = photoBox
       ? '<div style="width:40px;height:48px;margin-left:auto;border:1px dashed #cfd6d2;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font-size:6.5px;color:#9aa4ad">1×1</div>'
       : '';
-    const cardHtml = cards.map((c) => `
+    const cardHtml = cards.map((raw) => { const c = { ...raw, name: fitName(raw.name) }; return `
       <div style="border:${border};border-radius:8px;overflow:hidden;break-inside:avoid">
         <div style="background:#3f9bd8;color:#fff;display:flex;align-items:center;gap:6px;padding:6px 9px">
           <span style="font-size:7px;font-weight:800;letter-spacing:.08em">MVC CENTRAL STUDENT GOVERNMENT</span>
@@ -57,7 +73,7 @@ export default function BatchQr() {
           </div>
           ${photo}
         </div>
-      </div>`).join('');
+      </div>`; }).join('');
     w.document.write(`<!doctype html><html><head><title>CSG QR ID cards</title>
       <style>body{font-family:system-ui,sans-serif;margin:14mm}
       .grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}</style>
@@ -148,7 +164,7 @@ export default function BatchQr() {
                   <div style={{ display: 'flex', gap: 9, padding: 9, alignItems: 'center' }}>
                     <img src={c.qr} alt="" style={{ width: 78, height: 78, imageRendering: 'pixelated', flex: 'none' }} />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: nameFontSize(c.name), fontWeight: 800, lineHeight: 1.2, whiteSpace: 'pre-line' }}>{c.name}</div>
+                      <div style={{ fontSize: nameFontSize(fitName(c.name)), fontWeight: 800, lineHeight: 1.2, whiteSpace: 'pre-line' }}>{fitName(c.name)}</div>
                       <div style={{ fontSize: 8.5, color: 'var(--student-deep)', fontWeight: 700, marginTop: 3 }}>{c.no}</div>
                       <div style={{ fontSize: 8, color: 'var(--text-2)', marginTop: 1 }}>{c.course}</div>
                     </div>

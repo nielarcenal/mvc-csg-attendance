@@ -69,11 +69,9 @@ try {
   await shot('q02-events');
 
   step('start scanning');
-  await page.locator('[role="button"]', { hasText: 'Start scanning' }).first()
-    .click({ force: true })
-    .catch(async () => { // fallback: semantics label element
-      await page.getByText('Start scanning →').first().click({ force: true });
-    });
+  // Semantics nodes report zero-size rects — click the button by coordinates
+  // (first event card's Start scanning pill at the fixed 480px viewport).
+  await page.mouse.click(240, 384);
   await expectText('School of Computing', 'scan screen header');
   await shot('q03-scan');
 
@@ -84,8 +82,10 @@ try {
   });
   const fresh = await res.json();
   if (!fresh.pass) throw new Error('could not mint fresh pass: ' + JSON.stringify(fresh));
-  // manual pill first (app-level), then a REAL network cut (browser-level)
-  await page.getByText('ONLINE').first().click({ force: true }).catch(() => {});
+  // manual pill first (app-level; click by coordinates — the header pill at
+  // top right), then a REAL network cut (browser-level)
+  await page.mouse.click(422, 36);
+  await expectText('OFFLINE', 'manual pill toggled to OFFLINE');
   await context.setOffline(true);
   await page.waitForTimeout(400);
   await shot('q04-offline');
@@ -124,8 +124,9 @@ try {
 
   step('reconnect and sync the queued scan');
   await context.setOffline(false);
-  await page.getByText('OFFLINE').first().click({ force: true }).catch(() => {});
-  await page.waitForTimeout(4000);
+  await page.mouse.click(422, 36); // pill back to ONLINE — triggers flush
+  await expectText('0 pending sync', 'queue flushed after reconnect');
+  await page.waitForTimeout(1000);
   await shot('q10-synced');
 
   console.log('PAGE ERRORS:', consoleErrors.length ? consoleErrors : 'none');

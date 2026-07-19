@@ -54,15 +54,13 @@ with the real implementation.
   Session 9**: `students.school_id` is now NOT NULL and the current UI does
   not send it (existing rows were backfilled from course codes). Deliberate —
   the CSV format changes in Session 9 anyway.
-- **QR v2 (Session 10) is code-complete but only partially verified**
-  (2026-07-19). Backend live and smoke-tested: ed25519 key in edge secret
-  `QR_SIGNING_KEY` (private key exists NOWHERE else — losing it means
-  rotating via `scripts/setup-qr-keys.mjs --rotate`), public key in
-  `settings.qr_public_key`, `issue_qr_pass` deployed. Client code shipped
-  (checker offline verify/expiry/replay, student Generate screen, admin QR
-  controls, print auto-fit) — see NEXT_STEPS.md "Session 10" for the exact
-  per-file state and the remaining verification list. The in-progress
-  offline browser drive lives at `dashboard/.drive-offline.mjs`.
+- **QR v2 (Session 10) verified in-browser 2026-07-19** (offline checker
+  validation incl. replay/expiry/tamper/deactivated, student Generate
+  screen, batch-QR name auto-fit — drivers `.drive-offline.mjs`,
+  `.drive-student.mjs`, `.drive-qrfit.mjs` in dashboard/, all PASS).
+  Key facts: ed25519 private key ONLY in edge secret `QR_SIGNING_KEY`
+  (losing it means rotating via `scripts/setup-qr-keys.mjs --rotate`),
+  public key in `settings.qr_public_key`.
 - **Real-device airplane-mode scan test still owed** for QR v2 acceptance
   (no Android device was attached); Android APKs need a rebuild to carry
   the v2 code. Fold into Session 12 regression.

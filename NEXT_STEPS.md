@@ -39,7 +39,7 @@ Esc/Cancel are the only ways out. Browser-verified (sort survives refresh;
 edit round-trip; delete/archive/unarchive; logo click blocked under an
 open dialog). Session 9 is COMPLETE.
 
-## Session 10 — QR v2 (CODE COMPLETE 2026-07-19; verification partially done)
+## Session 10 — QR v2 ✅ DONE (2026-07-19) — except real-device airplane test (→ Session 12)
 
 ### Done and verified against live
 - **Keys (A5):** `scripts/setup-qr-keys.mjs` ran once — ed25519 private key
@@ -55,7 +55,7 @@ open dialog). Session 9 is COMPLETE.
   `QP1.<student_id>.<iat>.<exp>.<sig_b64url>`, signature over
   `"<student_id>.<iat>.<exp>"` (UTF-8). TTL clamped to ≥30s server-side.
 
-### Code complete, analyze/tsc clean, NOT yet end-to-end verified
+### Browser-verified end-to-end (2026-07-19, second pass)
 - **Checker offline validation** (`checker_app/lib/data/scan_store.dart`
   `_recordDynamicPass` + static gating in `recordToken`; roster bundle in
   `live_repo.refreshRoster` now carries qr_active/qr_expires_at + the
@@ -74,34 +74,41 @@ open dialog). Session 9 is COMPLETE.
   static expiry date (empty = never), Regenerate-token button — save and
   regenerate each confirm (§B); `regenerateQrToken`/`updateStudent` in
   `dashboard/src/data/api.ts`; StudentDetail carries qr fields.
-- **Print auto-fit** (`dashboard/src/pages/BatchQr.tsx` `nameFontSize`):
-  name font scales 10.5→6px by longest line, applied to preview AND print
-  HTML. Not yet screenshot-tested with a 45-char name.
+- **Print auto-fit** (`dashboard/src/pages/BatchQr.tsx` `nameFontSize` +
+  `fitName`): lines >33 chars get one balanced break at the space nearest
+  the middle (a 48-char line can't fit even at the 6px floor), then the
+  font scales 10.5→6px by longest line — preview AND print HTML.
 
-### Remaining verification (next session picks up here)
-1. **Offline checker drive — IN PROGRESS.** Driver:
-   `dashboard/.drive-offline.mjs` (run from `dashboard/` with
-   `ANON=<anon key> SHOTS_DIR=<dir> node .drive-offline.mjs`; serve the
-   checker web build first: `python -m http.server 8080 -d build/web` in
-   checker_app; build cmd in the driver header comment / memory). Status:
-   login + roster download + events screen WORK (coordinate clicks at
-   480px viewport); last fix made the text assertion pierce Flutter's
-   shadow DOM (`flt-glass-pane`) — NOT re-run since. Remaining asserts:
-   valid pass accepted offline, replay refused, expired refused, tampered
-   sig refused, deactivated static refused, reconnect sync.
-   Fixtures were ephemeral (scratchpad `qr-fixtures.json` — expired pass,
-   student access token, Bea's static token); regenerate by: set
-   qr_pass_ttl_seconds=30 → issue pass → restore 150; set Bea
-   (2024-00318) qr_active=false for the deactivated case and RESTORE
-   after (live DB is currently clean: Bea active, TTL 150).
-2. Student Generate screen browser check (web build + screenshot of QR +
-   countdown; offline shows the connect message).
-3. Batch QR 45-char-name screenshot.
-4. **Real airplane-mode test on a physical device** — no device was
-   attached; explicitly still owed (fold into Session 12 regression).
-   Checker/student Android APKs must be rebuilt for v2 (new dart code).
+### Verification results (all browser drives PASS, 2026-07-19)
+1. **Offline checker drive** — `dashboard/.drive-offline.mjs` full PASS:
+   valid dynamic pass accepted offline (student identified from cache),
+   replay refused, expired refused with the distinct message, tampered
+   signature refused, deactivated static refused, unknown code refused;
+   reconnect flush asserted ("0 pending sync") and the synced row checked
+   in the DB (session_id set, status `valid` from the SESSION window).
+   Driver fixes this pass: Start-scanning + ONLINE-pill clicks by
+   coordinates (semantics nodes report zero-size rects; pill at ~(422,36),
+   button at ~(240,384)). NOTE: the seeded SG General Assembly windows are
+   in the past — the drive temporarily widened event+session windows to
+   cover "now" and restored them after; a leftover CHK-E2E test row from
+   the previous session was also cleaned up.
+2. **Student Generate screen** — `dashboard/.drive-student.mjs` PASS:
+   login → My ID → empty state → Generate → QR + countdown ring rendered,
+   ticking down (147/150 after 3.5s), button flips to Regenerate; offline
+   regenerate shows the connect message. Screenshots in session scratchpad.
+3. **Batch QR auto-fit** — `dashboard/.drive-qrfit.mjs` PASS with a
+   48-char display name: two balanced lines, scaled font, no overflow, in
+   preview and print popup. Found+fixed during test: single-line scaling
+   alone soft-wrapped unpredictably past ~33 chars → added `fitName`;
+   full-size threshold tightened 19→17 chars (wide glyphs overflowed).
+4. **Real airplane-mode test on a physical device** — STILL OWED (no
+   device attached; fold into Session 12 regression). Checker/student
+   Android APKs must be rebuilt for v2 (new dart code).
 
-## Session 11 — Reports, polish, self-service (NOT STARTED)
+Fixture recipe (if drives need re-running): scratchpad `make-fixtures.mjs`
+pattern — student login token (j.delacruz), expired pass (TTL→30, issue,
+wait 40s, TTL→150), Bea (2024-00318) static token + qr_active=false;
+RESTORE Bea + delete synced test rows after. Live DB left clean.
 
 ## Session 11 — Reports, polish, self-service (NOT STARTED)
 xlsx student/event exports, audit viewer with full date+time + actor/table/
