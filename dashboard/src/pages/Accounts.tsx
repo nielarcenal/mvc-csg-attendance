@@ -1,14 +1,32 @@
 import { FormEvent, ReactNode, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/Shell';
 import { ConfirmDialog, LoadError, useEscape } from '../components/ConfirmDialog';
-import { AccountRow, SCHOOLS } from '../data/types';
+import { AccountRow, SCHOOLS, StudentDetail } from '../data/types';
 import {
   useLoadedState, loadAccounts, provisionAccount, ProvisionInput,
   parseStudentsCsv, importStudents, resetPassword, resendInvite, setAccountActive,
-  downloadCsv, CSV_HEADER,
+  updateStudent, downloadCsv, CSV_HEADER,
 } from '../data/api';
 
-const GRID = '1.9fr .9fr .8fr 1fr 1.1fr';
+const GRID = '1.9fr .85fr .7fr .95fr 1.4fr';
+
+// FEATURE_BATCH_2 §B: students sortable by school, year level, course and
+// name A–Z; the choice lives in the URL so it survives refresh/share.
+type SortKey = 'name' | 'school' | 'year' | 'course';
+const SORT_LABELS: Record<SortKey, string> = {
+  name: 'Name A–Z', school: 'School', year: 'Year level', course: 'Course',
+};
+
+function compareRows(a: AccountRow, b: AccountRow, key: SortKey): number {
+  const byName = () => a.sortName.localeCompare(b.sortName);
+  switch (key) {
+    case 'school': return a.school.localeCompare(b.school) || byName();
+    case 'year': return (a.yearLevel ?? 99) - (b.yearLevel ?? 99) || byName();
+    case 'course': return (a.course || '~').localeCompare(b.course || '~') || byName();
+    default: return byName();
+  }
+}
 
 const STATUS_CHIP: Record<AccountRow['status'], string> = {
   activated: 'chip green',
@@ -26,12 +44,30 @@ export default function Accounts() {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   // §4: crucial account actions confirm first, naming the person.
   const [confirmAction, setConfirmAction] = useState<
-    { kind: 'deactivate' | 'reset'; name: string; email: string } | null>(null);
+    { kind: 'deactivate' | 'reset' | 'restore'; name: string; email: string } | null>(null);
+  const [editing, setEditing] = useState<{ detail: StudentDetail; name: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { data: accounts, loading, error: loadFailed, retry } = useLoadedState(loadAccounts, [], [reload]);
-  const rows = accounts.filter((a) => a.role === role);
+
+  const [params, setParams] = useSearchParams();
+  const sortKey = (params.get('sort') ?? 'name') as SortKey;
+  const sortDir = params.get('dir') === 'desc' ? 'desc' : 'asc';
+  const setSort = (key: SortKey, dir?: 'asc' | 'desc') => {
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      const nextDir = dir ?? (key === sortKey && sortDir === 'asc' ? 'desc' : 'asc');
+      if (key === 'name' && nextDir === 'asc') { next.delete('sort'); next.delete('dir'); }
+      else { next.set('sort', key); next.set('dir', nextDir); }
+      return next;
+    }, { replace: true });
+  };
+
+  const rows = accounts
+    .filter((a) => a.role === role)
+    .sort((a, b) => (sortDir === 'asc' ? 1 : -1) * compareRows(a, b, sortKey));
   const countOf = (r: AccountRow['role']) => accounts.filter((a) => a.role === r).length;
   const statusCount = (s: AccountRow['status']) => accounts.filter((a) => a.status === s).length;
+  const arrow = (key: SortKey) => (sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '');
 
   const importCsv = async (file: File) => {
     const { rows: parsed, errors } = parseStudentsCsv(await file.text());
@@ -124,6 +160,28 @@ export default function Accounts() {
         <button className={`filter-pill${role === 'maker' ? ' active' : ''}`} onClick={() => setRole('maker')}>
           Event makers · {countOf('maker')}
         </button>
+        {role === 'student' && (
+          <>
+            <select
+              aria-label="Sort students"
+              style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--hairline)', background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--ink)' }}
+              value={sortKey}
+              onChange={(e) => setSort(e.target.value as SortKey, sortDir)}
+            >
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                <option key={k} value={k}>Sort: {SORT_LABELS[k]}</option>
+              ))}
+            </select>
+            <button
+              className="filter-pill"
+              title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+              onClick={() => setSort(sortKey)}
+              style={{ padding: '7px 11px' }}
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </button>
+          </>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <span className="chip green" style={{ padding: '5px 11px', fontSize: 10 }}>Activated {statusCount('activated')}</span>
           <span className="chip blue" style={{ padding: '5px 11px', fontSize: 10 }}>Invited {statusCount('invited')}</span>
@@ -132,7 +190,28 @@ export default function Accounts() {
       </div>
       <div className="card" style={{ margin: '12px 22px 18px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div className="table-head" style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, padding: '11px 18px' }}>
-          <div>NAME / EMAIL</div><div>STUDENT NO</div><div>COURSE</div><div>STATUS</div><div>ACTIONS</div>
+          <div
+            role="button"
+            tabIndex={0}
+            style={{ cursor: 'pointer' }}
+            title="Sort by name"
+            onClick={() => setSort('name')}
+            onKeyDown={(e) => e.key === 'Enter' && setSort('name')}
+          >
+            NAME / EMAIL{arrow('name')}
+          </div>
+          <div>STUDENT NO</div>
+          <div
+            role="button"
+            tabIndex={0}
+            style={{ cursor: 'pointer' }}
+            title="Sort by school"
+            onClick={() => setSort('school')}
+            onKeyDown={(e) => e.key === 'Enter' && setSort('school')}
+          >
+            SCHOOL{arrow('school')}
+          </div>
+          <div>STATUS</div><div>ACTIONS</div>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
           {rows.map((a) => (
@@ -153,15 +232,24 @@ export default function Accounts() {
                 </div>
               </div>
               <div style={{ fontWeight: 600 }}>{a.studentNo}</div>
-              <div>{a.course}</div>
+              <div style={{ fontWeight: 700 }}>
+                {a.school === '—' ? <span style={{ color: 'var(--muted)' }}>—</span>
+                  : <span title={SCHOOLS.find((s) => s.code === a.school)?.name}>{a.school}</span>}
+              </div>
               <div><span className={STATUS_CHIP[a.status]} style={{ padding: '3px 10px' }}>{a.statusLabel}</span></div>
-              <div style={{ opacity: busyEmail === a.email ? 0.5 : 1 }}>
+              <div style={{ opacity: busyEmail === a.email ? 0.5 : 1, fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>
+                {a.student && (
+                  <>
+                    <button style={{ color: 'var(--maker-deep)', fontWeight: 700 }} onClick={() => setEditing({ detail: a.student!, name: a.name })}>Edit</button>
+                    {(a.status !== 'never' || a.statusLabel !== 'No account') && ' · '}
+                  </>
+                )}
                 {a.status === 'activated' && (
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>
+                  <>
                     <button style={{ color: 'var(--student-deep)', fontWeight: 700 }} onClick={() => setConfirmAction({ kind: 'reset', name: a.name, email: a.email })}>Reset password</button>
                     {' · '}
                     <button style={{ color: 'var(--danger-deep)', fontWeight: 700 }} onClick={() => setConfirmAction({ kind: 'deactivate', name: a.name, email: a.email })}>Deactivate</button>
-                  </span>
+                  </>
                 )}
                 {(a.status === 'invited' || a.status === 'never') && (
                   a.email !== '—' && a.statusLabel !== 'No account' ? (
@@ -173,11 +261,11 @@ export default function Accounts() {
                       Resend invite
                     </button>
                   ) : (
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>Roster only</span>
+                    !a.student && <span>Roster only</span>
                   )
                 )}
                 {a.status === 'deactivated' && (
-                  <button style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--checker-deep)' }} onClick={() => doSetActive(a.email, true)}>
+                  <button style={{ color: 'var(--checker-deep)', fontWeight: 700 }} onClick={() => setConfirmAction({ kind: 'restore', name: a.name, email: a.email })}>
                     Restore
                   </button>
                 )}
@@ -207,15 +295,20 @@ export default function Accounts() {
       )}
       {confirmAction && (
         <ConfirmDialog
-          title={confirmAction.kind === 'deactivate'
-            ? `Deactivate ${confirmAction.name}?`
-            : `Reset password for ${confirmAction.name}?`}
-          body={confirmAction.kind === 'deactivate'
-            ? <>The account <b>{confirmAction.email}</b> loses access immediately (soft delete —
-              history stays in the audit log). You can restore it later.</>
-            : <>The current password for <b>{confirmAction.email}</b> stops working and a new
-              temporary password is shown once, for you to hand over.</>}
-          confirmLabel={confirmAction.kind === 'deactivate' ? 'Deactivate' : 'Reset password'}
+          title={{
+            deactivate: `Deactivate ${confirmAction.name}?`,
+            reset: `Reset password for ${confirmAction.name}?`,
+            restore: `Reactivate ${confirmAction.name}?`,
+          }[confirmAction.kind]}
+          body={{
+            deactivate: <>The account <b>{confirmAction.email}</b> loses access immediately (soft
+              delete — history stays in the audit log). You can restore it later.</>,
+            reset: <>The current password for <b>{confirmAction.email}</b> stops working and a new
+              temporary password is shown once, for you to hand over.</>,
+            restore: <>The account <b>{confirmAction.email}</b> gets access again with its
+              existing password.</>,
+          }[confirmAction.kind]}
+          confirmLabel={{ deactivate: 'Deactivate', reset: 'Reset password', restore: 'Reactivate' }[confirmAction.kind]}
           destructive={confirmAction.kind === 'deactivate'}
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => {
@@ -223,7 +316,20 @@ export default function Accounts() {
             setConfirmAction(null);
             if (!a) return;
             if (a.kind === 'deactivate') doSetActive(a.email, false);
+            else if (a.kind === 'restore') doSetActive(a.email, true);
             else doReset(a.email);
+          }}
+        />
+      )}
+      {editing && (
+        <EditStudentModal
+          detail={editing.detail}
+          name={editing.name}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            setNotice('Student details saved');
+            setReload((n) => n + 1);
           }}
         />
       )}
@@ -245,12 +351,146 @@ export default function Accounts() {
   );
 }
 
-// Modal backdrop that closes on Esc and backdrop click (UX §8).
+// Admin edit of student details (FEATURE_BATCH_2 §B) — names, school,
+// course, year, section, email. Saving asks for confirmation; the write is
+// audited by the students trigger. Course lives here (detail view), not in
+// the table (A2).
+function EditStudentModal({ detail, name, onClose, onSaved }: {
+  detail: StudentDetail; name: string; onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    first_name: detail.first_name,
+    middle_name: detail.middle_name ?? '',
+    last_name: detail.last_name,
+    email: detail.email ?? '',
+    school_id: detail.school_id,
+    course: detail.course ?? '',
+    year_level: detail.year_level == null ? '' : String(detail.year_level),
+    section: detail.section ?? '',
+  });
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = (k: string) => (e: { target: { value: string } }) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setConfirming(true);
+  };
+
+  const save = async () => {
+    setConfirming(false);
+    setBusy(true);
+    setError(null);
+    const err = await updateStudent({
+      id: detail.id,
+      profile_id: detail.profile_id,
+      student_no: detail.student_no,
+      first_name: form.first_name.trim(),
+      middle_name: form.middle_name.trim() || null,
+      last_name: form.last_name.trim(),
+      email: form.email.trim() || null,
+      school_id: form.school_id,
+      course: form.course.trim() || null,
+      year_level: form.year_level ? Number(form.year_level) || null : null,
+      section: form.section.trim() || null,
+    });
+    setBusy(false);
+    if (err) { setError(err); return; }
+    onSaved();
+  };
+
+  const input = { marginTop: 5, borderRadius: 11, padding: '9px 12px', fontWeight: 600, width: '100%' } as const;
+
+  return (
+    <EscapableOverlay onClose={() => (confirming ? setConfirming(false) : onClose())}>
+      <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: 440, borderRadius: 18, padding: 22 }}>
+        <form onSubmit={submit}>
+          <div className="display" style={{ fontSize: 17 }}>Edit student</div>
+          <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3 }}>
+            {detail.student_no} — changes are written to the audit log
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr .9fr 1.1fr', gap: 10, marginTop: 12 }}>
+            <div>
+              <div className="field-label">First name</div>
+              <input className="input-box" style={input} required value={form.first_name} onChange={set('first_name')} />
+            </div>
+            <div>
+              <div className="field-label">Middle (optional)</div>
+              <input className="input-box" style={input} value={form.middle_name} onChange={set('middle_name')} />
+            </div>
+            <div>
+              <div className="field-label">Last name</div>
+              <input className="input-box" style={input} required value={form.last_name} onChange={set('last_name')} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+            <div>
+              <div className="field-label">School</div>
+              <select className="input-box" style={input} required value={form.school_id} onChange={set('school_id')}>
+                <option value="">Select school…</option>
+                {SCHOOLS.map((s) => <option key={s.code} value={s.code}>{s.code} · {s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="field-label">Email</div>
+              <input className="input-box" style={input} type="email" value={form.email} onChange={set('email')} />
+            </div>
+            <div>
+              <div className="field-label">Course (optional)</div>
+              <input className="input-box" style={input} value={form.course} onChange={set('course')} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div className="field-label">Year</div>
+                <input className="input-box" style={input} type="number" min={1} max={6} value={form.year_level} onChange={set('year_level')} />
+              </div>
+              <div>
+                <div className="field-label">Section</div>
+                <input className="input-box" style={input} value={form.section} onChange={set('section')} />
+              </div>
+            </div>
+          </div>
+          {detail.profile_id && (
+            <div style={{ marginTop: 10, fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
+              Name changes also update the linked account’s display name. The sign-in email stays
+              unchanged — use Reset password / re-invite flows for account access.
+            </div>
+          )}
+          {error && (
+            <div style={{ marginTop: 10, background: 'rgba(217,89,80,.1)', color: 'var(--danger-deep)', borderRadius: 10, padding: '9px 12px', fontSize: 11, fontWeight: 600 }}>
+              {error}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 9, marginTop: 16 }}>
+            <button type="submit" className="pill-btn primary" disabled={busy} style={{ flex: 1, padding: 11, opacity: busy ? 0.7 : 1 }}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </button>
+            <button type="button" className="pill-btn ghost" onClick={onClose} style={{ padding: '11px 18px' }}>Cancel</button>
+          </div>
+        </form>
+      </div>
+      {confirming && (
+        <ConfirmDialog
+          title={`Save changes to ${name}?`}
+          body="The student’s roster record is updated everywhere — rosters, reports and the apps. The change is audited."
+          confirmLabel="Save changes"
+          onCancel={() => setConfirming(false)}
+          onConfirm={save}
+        />
+      )}
+    </EscapableOverlay>
+  );
+}
+
+// Modal backdrop: closes on Esc only. Background clicks are swallowed so
+// nothing behind the barrier (header included) can react (§B modal rule).
 function EscapableOverlay({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   useEscape(onClose);
   return (
     <div
-      onClick={onClose}
+      onClick={(e) => e.stopPropagation()}
       role="dialog"
       aria-modal="true"
       style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 40 }}

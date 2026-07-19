@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { supabase, hasBackend } from '../lib/supabase';
 import {
-  EventRow, LiveRow, ReviewItem, AccountRow, AuditRow, Method, SCHOOLS,
+  EventRow, LiveRow, ReviewItem, AccountRow, AuditRow, Method, SCHOOLS, StudentDetail,
 } from './types';
 
 export { hasBackend };
@@ -87,26 +87,48 @@ export async function loadEvents(): Promise<EventRow[] | null> {
   ]);
   if (!events) return null;
   const inCounts = new Map<string, number>();
+  const allCounts = new Map<string, number>();
   for (const s of scans ?? []) {
+    allCounts.set(s.event_id, (allCounts.get(s.event_id) ?? 0) + 1);
     if (s.scan_type === 'in') inCounts.set(s.event_id, (inCounts.get(s.event_id) ?? 0) + 1);
   }
-  return (events as any[]).map((e) => {
-    const checkers = e.event_checkers?.[0]?.count ?? 0;
-    const rsvps = e.event_rsvps?.[0]?.count ?? 0;
-    const present = inCounts.get(e.id) ?? 0;
-    const status = eventStatus(e, checkers);
-    return {
-      id: e.id, name: e.name, venue: e.venue ?? '—',
-      required: e.is_required, timeOut: e.requires_time_out || undefined,
-      rsvps: rsvps || undefined,
-      date: fmtDate(e.starts_at),
-      window: fmtWindow(e.checking_opens_at, e.checking_closes_at),
-      checkers,
-      attendance: status === 'draft' || status === 'upcoming' || !roster
-        ? null : Math.round((present / roster) * 100),
-      status,
-    } satisfies EventRow;
-  });
+  return (events as any[])
+    .filter((e) => e.active !== false) // soft-deleted events stay hidden
+    .map((e) => {
+      const checkers = e.event_checkers?.[0]?.count ?? 0;
+      const rsvps = e.event_rsvps?.[0]?.count ?? 0;
+      const present = inCounts.get(e.id) ?? 0;
+      const status = eventStatus(e, checkers);
+      return {
+        id: e.id, name: e.name, venue: e.venue ?? '—',
+        required: e.is_required, timeOut: e.requires_time_out || undefined,
+        rsvps: rsvps || undefined,
+        date: fmtDate(e.starts_at),
+        window: fmtWindow(e.checking_opens_at, e.checking_closes_at),
+        checkers,
+        attendance: status === 'draft' || status === 'upcoming' || !roster
+          ? null : Math.round((present / roster) * 100),
+        status,
+        scans: allCounts.get(e.id) ?? 0,
+        active: e.active !== false,
+        archived: e.archived === true,
+      } satisfies EventRow;
+    });
+}
+
+// A6: events are never hard-deleted. Zero attendance → soft delete
+// (active=false); anything with scans → archive (hidden, data intact).
+// The DB trigger enforces the same rule, so the UI can't cheat it.
+export async function softDeleteEvent(id: string): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+  const { error } = await supabase.from('events').update({ active: false }).eq('id', id);
+  return error ? error.message : null;
+}
+
+export async function setEventArchived(id: string, archived: boolean): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+  const { error } = await supabase.from('events').update({ archived }).eq('id', id);
+  return error ? error.message : null;
 }
 
 // FEATURE_BATCH_2 A3/A4: events carry a duration + per-day checking
@@ -455,17 +477,33 @@ export async function loadAccounts(): Promise<AccountRow[] | null> {
     invited: ['invited', 'Invited'],
     never_logged_in: ['never', 'Never logged in'],
   };
+  const detailOf = (s: any): StudentDetail => ({
+    id: s.id, profile_id: s.profile_id ?? null, student_no: s.student_no,
+    first_name: s.first_name ?? '', middle_name: s.middle_name ?? null,
+    last_name: s.last_name ?? '', email: s.email ?? null,
+    school_id: s.school_id ?? '', course: s.course ?? null,
+    year_level: s.year_level ?? null, section: s.section ?? null,
+  });
+  const sortNameOf = (s: any, fallback: string) =>
+    (s ? `${s.last_name ?? ''}, ${s.first_name ?? ''}` : fallback).toLowerCase();
+
   const rows: AccountRow[] = (profiles as any[]).map((p) => {
     const s = byProfile.get(p.id);
     const [status, statusLabel] = p.active
       ? statusMap[p.account_status] ?? ['never', '—'] : ['deactivated' as const, 'Deactivated'];
+    // The roster record is the source of truth for a student's name.
+    const name = s?.full_name ?? p.full_name;
     return {
-      initials: initialsOf(p.full_name), color: colorOf(p.full_name),
-      name: p.full_name, email: p.email,
+      initials: initialsOf(name), color: colorOf(name),
+      name, email: p.email,
       studentNo: s?.student_no ?? '—',
+      school: s?.school_id ?? '—',
       course: s ? `${s.course ?? ''} ${s.year_level ?? ''}-${s.section ?? ''}`.trim() : '—',
+      yearLevel: s?.year_level ?? null,
+      sortName: sortNameOf(s, p.full_name),
       status, statusLabel, lastLogin: '—',
       role: roleMap[p.role] ?? 'student',
+      student: s ? detailOf(s) : undefined,
     };
   });
   // Roster records that never activated an account.
@@ -474,11 +512,38 @@ export async function loadAccounts(): Promise<AccountRow[] | null> {
     rows.push({
       initials: initialsOf(s.full_name), color: colorOf(s.full_name),
       name: s.full_name, email: s.email ?? '—', studentNo: s.student_no,
+      school: s.school_id ?? '—',
       course: `${s.course ?? ''} ${s.year_level ?? ''}-${s.section ?? ''}`.trim(),
+      yearLevel: s.year_level ?? null,
+      sortName: sortNameOf(s, s.full_name),
       status: 'never', statusLabel: 'No account', lastLogin: '—', role: 'student',
+      student: detailOf(s),
     });
   }
   return rows;
+}
+
+// Admin edit of student details (FEATURE_BATCH_2 §B) — audited by the DB
+// trigger on students. Name changes also sync to a linked profile so the
+// account shows the same name (no-op under RLS unless super_admin; the
+// roster record is what the app displays either way).
+export async function updateStudent(u: StudentDetail): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+  const { id, profile_id, student_no: _no, ...cols } = u;
+  const { error } = await supabase.from('students').update({
+    ...cols,
+    middle_name: cols.middle_name || null,
+    email: cols.email || null,
+    course: cols.course || null,
+    section: cols.section || null,
+  }).eq('id', id);
+  if (error) return error.message;
+  if (profile_id) {
+    await supabase.from('profiles').update({
+      first_name: u.first_name, middle_name: u.middle_name || null, last_name: u.last_name,
+    }).eq('id', profile_id);
+  }
+  return null;
 }
 
 export interface ProvisionInput {

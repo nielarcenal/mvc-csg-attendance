@@ -52,10 +52,16 @@ export function Shell({ children }: { children: ReactNode }) {
           flexDirection: 'column',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px' }}>
+        {/* Logo + name route home; while a dialog is open its barrier sits
+            above this header and swallows the click (§B). */}
+        <NavLink
+          to="/dashboard"
+          aria-label="Go to dashboard"
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', color: 'inherit' }}
+        >
           <img src={`${import.meta.env.BASE_URL}assets/sg-logo.png`} alt="" style={{ width: 26, height: 26, borderRadius: '50%' }} />
           <span className="display" style={{ fontSize: 14 }}>CSG Events</span>
-        </div>
+        </NavLink>
         <nav style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12.5, fontWeight: 600 }}>
           {items.map((item) => (
             <NavLink

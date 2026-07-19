@@ -12,7 +12,9 @@ export function useEscape(onClose: () => void) {
 /**
  * UX §4 confirmation dialog: names the object in the title, Cancel is the
  * default (focused) action, and the confirm button restates the verb —
- * red when destructive. Esc and the backdrop cancel.
+ * red when destructive. The barrier sits above the whole app (header
+ * included) and SWALLOWS background clicks — Esc and Cancel are the only
+ * ways out (FEATURE_BATCH_2 §B).
  */
 export function ConfirmDialog({
   title, body, confirmLabel, destructive = false, busy = false, onConfirm, onCancel,
@@ -31,7 +33,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      onClick={onCancel}
+      onClick={(e) => e.stopPropagation()}
       role="dialog"
       aria-modal="true"
       style={{ position: 'fixed', inset: 0, background: 'rgba(35,42,49,.4)', display: 'grid', placeItems: 'center', zIndex: 60 }}

@@ -28,12 +28,16 @@ skip reporting and a downloadable template), Add-student form with name
 parts + required School. Verified in a real browser against live Supabase
 (1-week event, 2 sessions on day 1, by-school SOC+SOE, edit round-trip,
 CSV import with a bad-school row skipped); test fixtures cleaned up.
-**9b remaining:** delete/archive flows with confirmations, header logo nav +
-modal barrier above it, School column/filters on Accounts (relabel from
-Course), sortable tables with URL-reflected sort, admin edit student.
-Accept (9b): delete/archive confirm properly; logo click does nothing while
-a dialog is open; students sort by school/year/course/name, surviving
-refresh.
+**9b done (2026-07-19):** Accounts School column (course moved to the edit
+modal / detail view), admin edit-student with save confirmation (roster is
+name truth; linked profile name synced), students sortable by name A–Z /
+school / year / course with the sort in the URL, reactivate confirmation,
+events Delete (zero-attendance, soft) vs Archive (data intact) with
+confirmations + Archived filter + Unarchive, CSG logo/"CSG Events" routes
+to the dashboard, and all modal barriers now swallow background clicks —
+Esc/Cancel are the only ways out. Browser-verified (sort survives refresh;
+edit round-trip; delete/archive/unarchive; logo click blocked under an
+open dialog). Session 9 is COMPLETE.
 
 ## Session 10 — QR v2 (NOT STARTED)
 `issue_qr_pass` edge function + ed25519 keys in secrets, student Generate

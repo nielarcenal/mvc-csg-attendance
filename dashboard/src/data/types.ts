@@ -28,6 +28,9 @@ export interface EventRow {
   checkers: number;
   attendance: number | null; // percent
   status: EventStatus;
+  scans: number;      // total attendance rows — decides delete vs archive (A6)
+  active: boolean;    // false = soft-deleted
+  archived: boolean;  // hidden from default lists, data intact
 }
 
 export type Method = 'QR' | 'RFID' | 'Manual';
@@ -74,17 +77,36 @@ export interface ReviewItem {
 
 export type AccountStatus = 'activated' | 'invited' | 'never' | 'deactivated';
 
+/** Editable roster fields for the admin edit-student flow (audited). */
+export interface StudentDetail {
+  id: string;
+  profile_id: string | null;
+  student_no: string;
+  first_name: string;
+  middle_name: string | null;
+  last_name: string;
+  email: string | null;
+  school_id: string;
+  course: string | null;
+  year_level: number | null;
+  section: string | null;
+}
+
 export interface AccountRow {
   initials: string;
   color: string;
   name: string;
   email: string;
   studentNo: string;
-  course: string;
+  school: string;          // code — the students-tab column (A2)
+  course: string;          // detail view only
+  yearLevel: number | null;
+  sortName: string;        // "last, first" lowercased for name A–Z
   status: AccountStatus;
   statusLabel: string;
   lastLogin: string;
   role: 'student' | 'checker' | 'maker';
+  student?: StudentDetail; // present for roster rows — enables Edit
 }
 
 export interface AuditRow {
