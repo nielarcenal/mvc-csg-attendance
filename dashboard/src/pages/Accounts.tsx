@@ -6,7 +6,7 @@ import { AccountRow, SCHOOLS, StudentDetail } from '../data/types';
 import {
   useLoadedState, loadAccounts, provisionAccount, ProvisionInput,
   parseStudentsCsv, importStudents, resetPassword, resendInvite, setAccountActive,
-  updateStudent, downloadCsv, CSV_HEADER,
+  updateStudent, regenerateQrToken, downloadCsv, CSV_HEADER,
 } from '../data/api';
 
 const GRID = '1.9fr .85fr .7fr .95fr 1.4fr';
@@ -367,12 +367,21 @@ function EditStudentModal({ detail, name, onClose, onSaved }: {
     course: detail.course ?? '',
     year_level: detail.year_level == null ? '' : String(detail.year_level),
     section: detail.section ?? '',
+    qr_mode: detail.qr_mode,
+    qr_active: detail.qr_active,
+    qr_expires_at: detail.qr_expires_at ? detail.qr_expires_at.slice(0, 10) : '',
   });
   const [confirming, setConfirming] = useState(false);
+  const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const set = (k: string) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const qrChanged = form.qr_mode !== detail.qr_mode
+    || form.qr_active !== detail.qr_active
+    || (form.qr_expires_at || null) !== (detail.qr_expires_at ? detail.qr_expires_at.slice(0, 10) : null);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -395,10 +404,24 @@ function EditStudentModal({ detail, name, onClose, onSaved }: {
       course: form.course.trim() || null,
       year_level: form.year_level ? Number(form.year_level) || null : null,
       section: form.section.trim() || null,
+      qr_mode: form.qr_mode,
+      qr_active: form.qr_active,
+      qr_expires_at: form.qr_mode === 'static' && form.qr_expires_at
+        ? new Date(`${form.qr_expires_at}T23:59:59`).toISOString() : null,
     });
     setBusy(false);
     if (err) { setError(err); return; }
     onSaved();
+  };
+
+  const regenerate = async () => {
+    setConfirmingRegen(false);
+    setBusy(true);
+    setError(null);
+    const err = await regenerateQrToken(detail.id);
+    setBusy(false);
+    if (err) { setError(err); return; }
+    setNotice('New QR token issued — reprint the card; the old printout stops scanning once checkers refresh their roster.');
   };
 
   const input = { marginTop: 5, borderRadius: 11, padding: '9px 12px', fontWeight: 600, width: '100%' } as const;
@@ -458,6 +481,58 @@ function EditStudentModal({ detail, name, onClose, onSaved }: {
               unchanged — use Reset password / re-invite flows for account access.
             </div>
           )}
+
+          {/* QR v2 admin controls (A5): mode, expiry, deactivate, regenerate */}
+          <div style={{ marginTop: 14, borderTop: '1px solid var(--hairline-2)', paddingTop: 12 }}>
+            <div className="field-label" style={{ marginBottom: 8 }}>QR CODE</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div className="field-label">Mode</div>
+                <select className="input-box" style={input} value={form.qr_mode} onChange={set('qr_mode')}>
+                  <option value="dynamic">Dynamic (app-generated)</option>
+                  <option value="static">Static (printed card)</option>
+                </select>
+              </div>
+              <div>
+                <div className="field-label">Status</div>
+                <select
+                  className="input-box" style={input}
+                  value={form.qr_active ? 'active' : 'off'}
+                  onChange={(e) => setForm((f) => ({ ...f, qr_active: e.target.value === 'active' }))}
+                >
+                  <option value="active">Active</option>
+                  <option value="off">Deactivated</option>
+                </select>
+              </div>
+              {form.qr_mode === 'static' && (
+                <div>
+                  <div className="field-label">Static expiry (empty = never)</div>
+                  <input className="input-box" style={input} type="date" value={form.qr_expires_at} onChange={set('qr_expires_at')} />
+                </div>
+              )}
+              <div style={{ alignSelf: 'end' }}>
+                <button
+                  type="button"
+                  className="pill-btn"
+                  style={{ border: '1.5px solid var(--danger)', color: 'var(--danger-deep)', padding: '8px 14px', fontSize: 10.5, fontWeight: 700, width: '100%' }}
+                  onClick={() => setConfirmingRegen(true)}
+                >
+                  Regenerate static token
+                </button>
+              </div>
+            </div>
+            {qrChanged && (
+              <div style={{ marginTop: 8, fontSize: 10, color: 'var(--alert-deep)', fontWeight: 600, lineHeight: 1.5 }}>
+                QR changes take effect on the student’s next app refresh and on the checkers’ next
+                roster download.
+              </div>
+            )}
+          </div>
+          {notice && (
+            <div style={{ marginTop: 10, background: 'rgba(53,164,99,.1)', color: 'var(--checker-deep)', borderRadius: 10, padding: '9px 12px', fontSize: 11, fontWeight: 600, lineHeight: 1.5 }}>
+              {notice}
+            </div>
+          )}
           {error && (
             <div style={{ marginTop: 10, background: 'rgba(217,89,80,.1)', color: 'var(--danger-deep)', borderRadius: 10, padding: '9px 12px', fontSize: 11, fontWeight: 600 }}>
               {error}
@@ -474,10 +549,23 @@ function EditStudentModal({ detail, name, onClose, onSaved }: {
       {confirming && (
         <ConfirmDialog
           title={`Save changes to ${name}?`}
-          body="The student’s roster record is updated everywhere — rosters, reports and the apps. The change is audited."
+          body={qrChanged
+            ? 'This includes QR changes (mode, status or expiry) — the student’s current code may stop scanning. Everything is audited.'
+            : 'The student’s roster record is updated everywhere — rosters, reports and the apps. The change is audited.'}
           confirmLabel="Save changes"
+          destructive={qrChanged && !form.qr_active}
           onCancel={() => setConfirming(false)}
           onConfirm={save}
+        />
+      )}
+      {confirmingRegen && (
+        <ConfirmDialog
+          title={`Regenerate QR token for ${name}?`}
+          body="A new static token is issued immediately. Any printed card with the old token stops scanning once checkers refresh their roster — reprint from the Reports page."
+          confirmLabel="Regenerate"
+          destructive
+          onCancel={() => setConfirmingRegen(false)}
+          onConfirm={regenerate}
         />
       )}
     </EscapableOverlay>

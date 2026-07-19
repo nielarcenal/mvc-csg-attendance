@@ -483,6 +483,9 @@ export async function loadAccounts(): Promise<AccountRow[] | null> {
     last_name: s.last_name ?? '', email: s.email ?? null,
     school_id: s.school_id ?? '', course: s.course ?? null,
     year_level: s.year_level ?? null, section: s.section ?? null,
+    qr_mode: s.qr_mode ?? 'dynamic',
+    qr_active: s.qr_active !== false,
+    qr_expires_at: s.qr_expires_at ?? null,
   });
   const sortNameOf = (s: any, fallback: string) =>
     (s ? `${s.last_name ?? ''}, ${s.first_name ?? ''}` : fallback).toLowerCase();
@@ -536,6 +539,7 @@ export async function updateStudent(u: StudentDetail): Promise<string | null> {
     email: cols.email || null,
     course: cols.course || null,
     section: cols.section || null,
+    qr_expires_at: cols.qr_expires_at || null,
   }).eq('id', id);
   if (error) return error.message;
   if (profile_id) {
@@ -544,6 +548,15 @@ export async function updateStudent(u: StudentDetail): Promise<string | null> {
     }).eq('id', profile_id);
   }
   return null;
+}
+
+// A5: invalidates the student's printed/static QR immediately — old
+// printouts stop scanning once checkers refresh their roster cache.
+export async function regenerateQrToken(studentId: string): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+  const { error } = await supabase.from('students')
+    .update({ qr_token: crypto.randomUUID() }).eq('id', studentId);
+  return error ? error.message : null;
 }
 
 export interface ProvisionInput {

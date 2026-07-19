@@ -11,6 +11,8 @@ class Student {
     required this.studentNo,
     required this.course,
     required this.qrToken,
+    this.qrMode = 'dynamic',
+    this.qrActive = true,
   });
 
   final String fullName;
@@ -18,6 +20,10 @@ class Student {
   final String studentNo;
   final String course;
   final String qrToken;
+
+  /// QR v2 (A5): dynamic passes by default; static is admin-assigned.
+  final String qrMode; // 'dynamic' | 'static'
+  final bool qrActive;
 
   String get initials {
     final parts = fullName.replaceAll(',', '').trim().split(RegExp(r'\s+'));

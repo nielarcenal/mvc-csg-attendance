@@ -200,9 +200,12 @@ class _KioskScreenState extends State<KioskScreen> {
                               ? (success && current.forReview
                                   ? 'RECORDED — FOR REVIEW (${current.lateMinutes} MIN LATE)'
                                   : (s.timeIn ? 'TIME-IN RECORDED' : 'TIME-OUT RECORDED'))
-                              : (current.result == ScanResult.duplicate
-                                  ? 'ALREADY TIMED-IN'
-                                  : 'NOT ON ROSTER'),
+                              : switch (current.result) {
+                                  ScanResult.duplicate => 'ALREADY TIMED-IN',
+                                  ScanResult.expired => 'EXPIRED CODE',
+                                  ScanResult.rejected => 'CODE REFUSED',
+                                  _ => 'NOT ON ROSTER',
+                                },
                           style: T.sectionLabel(color: Colors.white.withOpacity(.85), size: 9.5),
                         ),
                         const SizedBox(height: 2),
@@ -211,7 +214,8 @@ class _KioskScreenState extends State<KioskScreen> {
                             overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
                         Text(
-                            '${current?.course ?? 'Ready'} · ${s.scanned} scanned this event',
+                            current?.reason ??
+                                '${current?.course ?? 'Ready'} · ${s.scanned} scanned this event',
                             style: T.ui(11, color: Colors.white.withOpacity(.9))),
                       ],
                     ),

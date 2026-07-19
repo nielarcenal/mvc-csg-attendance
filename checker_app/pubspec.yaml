@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # pure-Dart ed25519 — offline dynamic-pass verification (QR v2)
+  cryptography: ^2.7.0
   google_fonts: ^6.2.1
   mobile_scanner: ^6.0.11
   shared_preferences: ^2.5.3

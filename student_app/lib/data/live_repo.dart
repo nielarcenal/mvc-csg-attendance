@@ -47,6 +47,42 @@ Future<void> signOut() async {
   if (hasBackend) await _db.auth.signOut();
 }
 
+// ── dynamic QR passes (FEATURE_BATCH_2 A5) ─────────────────────────
+class QrPass {
+  const QrPass({required this.pass, required this.exp, required this.ttl});
+  final String pass; // "QP1.…" — rendered as the QR payload
+  final int exp;     // epoch seconds
+  final int ttl;     // seconds the pass lives
+}
+
+/// Requests a signed pass from the issue_qr_pass edge function. Being
+/// online is required BY DESIGN — that is what kills screenshot sharing.
+Future<({QrPass? pass, String? error})> issueQrPass() async {
+  if (!hasBackend) return (pass: null, error: 'App not configured.');
+  try {
+    final res = await _db.functions.invoke('issue_qr_pass');
+    final data = Map<String, dynamic>.from(res.data as Map);
+    return (
+      pass: QrPass(
+        pass: data['pass'] as String,
+        exp: (data['exp'] as num).toInt(),
+        ttl: (data['ttl'] as num).toInt(),
+      ),
+      error: null,
+    );
+  } on FunctionException catch (e) {
+    final details = e.details;
+    final msg = details is Map ? details['error']?.toString() : null;
+    return (pass: null, error: msg ?? 'Could not generate a code (${e.status}).');
+  } catch (_) {
+    return (
+      pass: null,
+      error: 'Connect to the internet to generate your code — or ask the '
+          'checker to look you up by name.',
+    );
+  }
+}
+
 // ── formatting ──────────────────────────────────────────────────────
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _monthsUp = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -69,7 +105,7 @@ Future<void> refreshAll() async {
       await _db.from('profiles').select('full_name, email').eq('id', uid).single();
   final student = await _db
       .from('students')
-      .select('id, student_no, full_name, course, year_level, section, qr_token')
+      .select('id, student_no, full_name, course, year_level, section, qr_token, qr_mode, qr_active')
       .eq('profile_id', uid)
       .maybeSingle();
 
@@ -88,6 +124,8 @@ Future<void> refreshAll() async {
         ? '—'
         : '${student['course'] ?? ''} ${student['year_level'] ?? ''}-${student['section'] ?? ''}'.trim(),
     qrToken: (student?['qr_token'] ?? '') as String,
+    qrMode: (student?['qr_mode'] ?? 'dynamic') as String,
+    qrActive: (student?['qr_active'] as bool?) ?? true,
   );
   final studentId = student?['id'] as String?;
 

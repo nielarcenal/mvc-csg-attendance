@@ -90,6 +90,10 @@ export interface StudentDetail {
   course: string | null;
   year_level: number | null;
   section: string | null;
+  // QR v2 (A5): per-student admin controls
+  qr_mode: 'dynamic' | 'static';
+  qr_active: boolean;
+  qr_expires_at: string | null; // static QRs only; null = never expires
 }
 
 export interface AccountRow {

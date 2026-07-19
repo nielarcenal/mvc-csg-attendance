@@ -10,6 +10,14 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
+// FEATURE_BATCH_2 §B: long names scale down gradually instead of wrapping
+// or overflowing the card. ~19 chars fit at full size in the card's text
+// column; beyond that the font shrinks proportionally, floored at 6px.
+function nameFontSize(name: string): number {
+  const longest = Math.max(...name.split('\n').map((l) => l.length), 1);
+  return Math.max(6, Math.min(10.5, (10.5 * 19) / longest));
+}
+
 export default function BatchQr() {
   const [scope, setScope] = useState('all'); // 'all' or a course code
   const [cutGuides, setCutGuides] = useState(true);
@@ -43,7 +51,7 @@ export default function BatchQr() {
         <div style="display:flex;gap:9px;padding:9px;align-items:center">
           <img src="${c.qr}" style="width:78px;height:78px;image-rendering:pixelated;flex:none" />
           <div style="min-width:0">
-            <div style="font-size:10.5px;font-weight:800;line-height:1.2;white-space:pre-line">${c.name}</div>
+            <div style="font-size:${nameFontSize(c.name)}px;font-weight:800;line-height:1.2;white-space:pre-line">${c.name}</div>
             <div style="font-size:8.5px;color:#2b6da0;font-weight:700;margin-top:3px">${c.no}</div>
             <div style="font-size:8px;color:#6b7580;margin-top:1px">${c.course}</div>
           </div>
@@ -140,7 +148,7 @@ export default function BatchQr() {
                   <div style={{ display: 'flex', gap: 9, padding: 9, alignItems: 'center' }}>
                     <img src={c.qr} alt="" style={{ width: 78, height: 78, imageRendering: 'pixelated', flex: 'none' }} />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 800, lineHeight: 1.2, whiteSpace: 'pre-line' }}>{c.name}</div>
+                      <div style={{ fontSize: nameFontSize(c.name), fontWeight: 800, lineHeight: 1.2, whiteSpace: 'pre-line' }}>{c.name}</div>
                       <div style={{ fontSize: 8.5, color: 'var(--student-deep)', fontWeight: 700, marginTop: 3 }}>{c.no}</div>
                       <div style={{ fontSize: 8, color: 'var(--text-2)', marginTop: 1 }}>{c.course}</div>
                     </div>

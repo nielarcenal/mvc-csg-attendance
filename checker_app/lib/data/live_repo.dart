@@ -149,9 +149,16 @@ Future<void> refreshRoster() async {
   try {
     rows = List<Map<String, dynamic>>.from(await client
         .from('students')
-        .select('id, student_no, full_name, course, year_level, section, qr_token, rfid_uid')
+        .select('id, student_no, full_name, course, year_level, section, '
+            'qr_token, rfid_uid, qr_active, qr_expires_at')
         .eq('active', true)
         .order('full_name'));
+    // The ed25519 public key rides with the roster bundle so dynamic
+    // passes verify fully offline (A5).
+    final keyRow = await client
+        .from('settings').select('value').eq('key', 'qr_public_key').maybeSingle();
+    final key = keyRow?['value'];
+    if (key is String && key.isNotEmpty) qrPublicKey = key;
   } catch (_) {
     await restoreRoster(); // offline — use the last cached roster
     return;
@@ -174,6 +181,8 @@ Future<void> refreshRoster() async {
             colorSeed: (s['student_no'] as String).hashCode % 4,
             qrToken: s['qr_token'] as String?,
             rfidUid: s['rfid_uid'] as String?,
+            qrActive: (s['qr_active'] as bool?) ?? true,
+            qrExpiresAt: s['qr_expires_at'] as String?,
           ))
       .toList();
   rosterSyncedAt = DateTime.now();

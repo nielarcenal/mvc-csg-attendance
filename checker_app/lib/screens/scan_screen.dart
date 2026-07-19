@@ -86,6 +86,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       case ScanResult.duplicate:
         HapticFeedback.mediumImpact();
       case ScanResult.unknown:
+      case ScanResult.expired:
+      case ScanResult.rejected:
         HapticFeedback.heavyImpact();
         SystemSound.play(SystemSoundType.alert).catchError(
             (_) => SystemSound.play(SystemSoundType.click));
@@ -416,8 +418,22 @@ class _FeedbackCard extends StatelessWidget {
           glyph = '✕';
           label = 'NOT ON ROSTER';
           name = 'Unknown code';
-          meta = 'This QR is not on the cached roster';
+          meta = record!.reason ?? 'This QR is not on the cached roster';
           sub = 'Retry, or use manual lookup';
+        case ScanResult.expired:
+          bg = T.danger;
+          glyph = '⌛';
+          label = 'EXPIRED CODE';
+          name = record!.name;
+          meta = record!.reason ?? 'Expired code — ask the student to regenerate';
+          sub = 'Verified offline against the cached QR key';
+        case ScanResult.rejected:
+          bg = T.danger;
+          glyph = '✕';
+          label = 'CODE REFUSED';
+          name = record!.name;
+          meta = record!.reason ?? 'Code refused';
+          sub = 'Verified offline against the cached QR key';
       }
     }
 

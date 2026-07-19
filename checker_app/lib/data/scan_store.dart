@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -27,6 +28,8 @@ class RosterEntry {
     this.id,
     this.qrToken,
     this.rfidUid,
+    this.qrActive = true,
+    this.qrExpiresAt,
   });
 
   final String name;
@@ -38,16 +41,22 @@ class RosterEntry {
   final String? qrToken;
   final String? rfidUid;
 
+  /// QR v2 (A5): admin can deactivate a QR or give a static one an expiry.
+  final bool qrActive;
+  final String? qrExpiresAt; // ISO — static QRs only
+
   Map<String, dynamic> toJson() => {
         'id': id, 'name': name, 'studentNo': studentNo, 'course': course,
         'initials': initials, 'colorSeed': colorSeed,
         'qrToken': qrToken, 'rfidUid': rfidUid,
+        'qrActive': qrActive, 'qrExpiresAt': qrExpiresAt,
       };
 
   static RosterEntry fromJson(Map<String, dynamic> j) => RosterEntry(
         id: j['id'], name: j['name'], studentNo: j['studentNo'],
         course: j['course'], initials: j['initials'], colorSeed: j['colorSeed'],
         qrToken: j['qrToken'], rfidUid: j['rfidUid'],
+        qrActive: j['qrActive'] ?? true, qrExpiresAt: j['qrExpiresAt'],
       );
 }
 
@@ -58,17 +67,25 @@ List<RosterEntry> roster = const [];
 /// When the roster cache was last refreshed from the server (null = never).
 DateTime? rosterSyncedAt;
 
+/// Ed25519 public key (base64, raw 32 bytes) bundled with the roster —
+/// dynamic passes are verified against it fully offline (A5).
+String? qrPublicKey;
+
 const _rosterKey = 'roster_cache_v1';
 const _rosterAtKey = 'roster_cache_at_v1';
+const _qrKeyKey = 'qr_public_key_v1';
 
 Future<void> persistRoster() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString(_rosterKey, jsonEncode(roster.map((r) => r.toJson()).toList()));
   await prefs.setString(_rosterAtKey, (rosterSyncedAt ?? DateTime.now()).toIso8601String());
+  final key = qrPublicKey;
+  if (key != null) await prefs.setString(_qrKeyKey, key);
 }
 
 Future<void> restoreRoster() async {
   final prefs = await SharedPreferences.getInstance();
+  qrPublicKey ??= prefs.getString(_qrKeyKey);
   final raw = prefs.getString(_rosterKey);
   if (raw == null) return;
   roster = (jsonDecode(raw) as List)
@@ -78,7 +95,16 @@ Future<void> restoreRoster() async {
   rosterSyncedAt = at == null ? null : DateTime.tryParse(at);
 }
 
-enum ScanResult { success, duplicate, unknown }
+enum ScanResult {
+  success,
+  duplicate,
+  unknown,
+  /// Dynamic pass past its TTL, or a static QR past its expiry date.
+  expired,
+  /// Structurally valid but refused: bad signature, deactivated QR, or a
+  /// replayed pass. [ScanRecord.reason] carries the specific message.
+  rejected,
+}
 
 enum SyncState { queued, uploading, synced, merged }
 
@@ -90,6 +116,7 @@ class ScanRecord {
     required this.result,
     required this.method,
     this.course,
+    this.reason,
     this.forReview = false,
     this.lateMinutes = 0,
     this.syncState = SyncState.queued,
@@ -102,6 +129,10 @@ class ScanRecord {
   final ScanResult result;
   final String method;
   final String? course;
+
+  /// Specific refusal message for expired/rejected results (A5/D):
+  /// "Expired code — ask the student to regenerate" vs "Unknown code" etc.
+  final String? reason;
 
   /// Accepted but outside the checking window (UX §6: distinct BLUE state).
   /// The server computes the authoritative status from scanned_at; this
@@ -234,9 +265,15 @@ class ScanSession extends ChangeNotifier {
     return '$hour12:${now.minute.toString().padLeft(2, '0')}';
   }
 
-  /// Camera/RFID entry point. The QR payload is the student's `qr_token`.
+  /// Camera/RFID entry point. Dynamic passes ("QP1.…") verify fully
+  /// offline; anything else is a static `qr_token` or an RFID UID.
   Future<void> recordToken(String raw, {String method = 'qr'}) async {
-    final token = raw.split(':').first.trim();
+    final input = raw.trim();
+    if (input.startsWith('QP1.')) {
+      await _recordDynamicPass(input, method: method);
+      return;
+    }
+    final token = input.split(':').first.trim();
     final entry = roster
         .where((r) => r.qrToken == token || (r.rfidUid != null && r.rfidUid == token))
         .toList();
@@ -244,7 +281,97 @@ class ScanSession extends ChangeNotifier {
       _feedback(null, ScanResult.unknown, method);
       return;
     }
-    await recordStudent(entry.first, method: method);
+    final e = entry.first;
+    // Static QR gating (A5) — applies to the printed token, not RFID cards.
+    if (e.qrToken == token) {
+      if (!e.qrActive) {
+        _feedback(e, ScanResult.rejected, method,
+            reason: 'QR deactivated by the SG office — use manual lookup');
+        return;
+      }
+      final expIso = e.qrExpiresAt;
+      if (expIso != null) {
+        final expiry = DateTime.tryParse(expIso);
+        if (expiry != null && DateTime.now().toUtc().isAfter(expiry.toUtc())) {
+          _feedback(e, ScanResult.expired, method,
+              reason: 'Static QR expired — the student needs a new one');
+          return;
+        }
+      }
+    }
+    await recordStudent(e, method: method);
+  }
+
+  /// Replay blocking: the newest issued-at we accepted per student. A pass
+  /// presented again (screenshot, forward) has the same iat and is refused
+  /// even inside its TTL.
+  final Map<String, int> _lastIat = {};
+
+  Future<void> _recordDynamicPass(String raw, {String method = 'qr'}) async {
+    final parts = raw.split('.');
+    final iat = parts.length == 5 ? int.tryParse(parts[2]) : null;
+    final exp = parts.length == 5 ? int.tryParse(parts[3]) : null;
+    if (iat == null || exp == null) {
+      _feedback(null, ScanResult.unknown, method);
+      return;
+    }
+    final sid = parts[1];
+    final entry = roster.where((r) => r.id == sid).firstOrNull;
+    if (entry == null) {
+      _feedback(null, ScanResult.unknown, method);
+      return;
+    }
+    if (!entry.qrActive) {
+      _feedback(entry, ScanResult.rejected, method,
+          reason: 'QR deactivated by the SG office — use manual lookup');
+      return;
+    }
+    final pub = qrPublicKey;
+    if (pub == null) {
+      _feedback(entry, ScanResult.rejected, method,
+          reason: 'No QR key in the roster cache — refresh the roster first');
+      return;
+    }
+    if (!await _verifyPassSignature('$sid.${parts[2]}.${parts[3]}', parts[4], pub)) {
+      _feedback(entry, ScanResult.rejected, method,
+          reason: 'Invalid signature — not a code issued by the app');
+      return;
+    }
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    if (now > exp) {
+      _feedback(entry, ScanResult.expired, method,
+          reason: 'Expired code — ask the student to regenerate');
+      return;
+    }
+    final last = _lastIat[sid];
+    if (last != null && iat <= last) {
+      _feedback(entry, ScanResult.rejected, method,
+          reason: 'Code already used — ask the student to regenerate');
+      return;
+    }
+    _lastIat[sid] = iat;
+    await recordStudent(entry, method: method);
+  }
+
+  static Future<bool> _verifyPassSignature(
+      String message, String sigB64url, String publicKeyB64) async {
+    try {
+      var b64 = sigB64url.replaceAll('-', '+').replaceAll('_', '/');
+      while (b64.length % 4 != 0) {
+        b64 += '=';
+      }
+      final ok = await Ed25519().verify(
+        utf8.encode(message),
+        signature: Signature(
+          base64Decode(b64),
+          publicKey: SimplePublicKey(base64Decode(publicKeyB64),
+              type: KeyPairType.ed25519),
+        ),
+      );
+      return ok;
+    } catch (_) {
+      return false; // malformed base64 / key — treat as invalid
+    }
   }
 
   /// Manual-lookup / camera-confirmed entry point.
@@ -277,7 +404,7 @@ class ScanSession extends ChangeNotifier {
     if (online) await flush();
   }
 
-  void _feedback(RosterEntry? entry, ScanResult result, String method) {
+  void _feedback(RosterEntry? entry, ScanResult result, String method, {String? reason}) {
     final now = DateTime.now();
     final closes = checkingClosesAt;
     final late = result == ScanResult.success && closes != null && now.isAfter(closes);
@@ -288,6 +415,7 @@ class ScanSession extends ChangeNotifier {
       result: result,
       method: method.toUpperCase() == 'QR' ? 'QR' : method[0].toUpperCase() + method.substring(1),
       course: entry?.course,
+      reason: reason,
       forReview: late,
       lateMinutes: late ? now.difference(closes).inMinutes : 0,
     );
