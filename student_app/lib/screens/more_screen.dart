@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import '../data/models.dart';
+import 'change_password_screen.dart';
 import 'history_screen.dart';
 import 'fines_screen.dart';
 import 'notifications_screen.dart';
@@ -87,6 +88,10 @@ class MoreScreen extends StatelessWidget {
                 const SizedBox(height: 9),
                 _item(context, Icons.edit_document, T.alert, T.alertDeep, 'File an excuse',
                     'For a missed event', const ExcuseScreen()),
+                const SizedBox(height: 9),
+                _item(context, Icons.lock_rounded, T.accent, T.accentDeep,
+                    'Change password', 'Takes effect on your next sign-in',
+                    const ChangePasswordScreen()),
                 const SizedBox(height: 18),
                 GhostButton('Sign out', onTap: () => _confirmSignOut(context)),
               ],

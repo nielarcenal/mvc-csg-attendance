@@ -14,7 +14,8 @@ export default function ReviewQueue() {
   const [error, setError] = useState<string | null>(null);
   const [confirmingReject, setConfirmingReject] = useState(false);
   const { profile } = useAuth();
-  const { data: all, loading, error: loadFailed, retry } = useLoadedState(loadReviewItems, []);
+  const { data: all, loading, error: loadFailed, retry } =
+    useLoadedState(loadReviewItems, [], [], { auto: true });
 
   const items = useMemo(
     () => all.filter((i) => tab === 'all' || i.kind === tab),
@@ -42,6 +43,7 @@ export default function ReviewQueue() {
             <button className={`filter-pill${tab === 'all' ? ' active' : ''}`} style={{ padding: '7px 14px' }} onClick={() => setTab('all')}>All · {all.length}</button>
             <button className={`filter-pill${tab === 'late' ? ' active' : ''}`} style={{ padding: '7px 14px' }} onClick={() => setTab('late')}>Late scans · {countOf('late')}</button>
             <button className={`filter-pill${tab === 'excuse' ? ' active' : ''}`} style={{ padding: '7px 14px' }} onClick={() => setTab('excuse')}>Excuses · {countOf('excuse')}</button>
+            <button className="pill-btn" style={{ padding: '7px 14px', fontSize: 11 }} onClick={retry}>↻ Refresh</button>
           </>
         }
       />

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/Shell';
 import { useLoadedState, loadQrCards } from '../data/api';
 
@@ -39,7 +40,7 @@ export default function BatchQr() {
   const [cutGuides, setCutGuides] = useState(true);
   const [photoBox, setPhotoBox] = useState(false);
   const [page, setPage] = useState(1);
-  const { data: allCards, loading } = useLoadedState(loadQrCards, []);
+  const { data: allCards, loading, retry } = useLoadedState(loadQrCards, []);
   // Course code = first word of the course string ("BSIT 3-A" → "BSIT").
   const courses = useMemo(
     () => [...new Set(allCards.map((c) => c.course.split(' ')[0]).filter(Boolean))].sort(),
@@ -85,9 +86,17 @@ export default function BatchQr() {
   return (
     <>
       <PageHeader
-        crumb={<>Reports / <span style={{ color: 'var(--maker-deep)' }}>Printable QR IDs</span></>}
+        crumb={(
+          <>
+            <Link to="/reports" style={{ color: 'inherit', textDecoration: 'none' }}>Reports</Link>
+            {' / '}
+            <span style={{ color: 'var(--maker-deep)' }}>Printable QR IDs</span>
+          </>
+        )}
         title="Batch QR ID cards"
         actions={
+          <>
+          <button className="pill-btn" style={{ padding: '8px 15px', fontSize: 11.5 }} onClick={retry}>↻ Refresh</button>
           <button
             className="pill-btn primary"
             style={{ padding: '10px 22px', fontSize: 12.5, opacity: total === 0 ? 0.5 : 1 }}
@@ -96,6 +105,7 @@ export default function BatchQr() {
           >
             Generate PDF · {total} cards
           </button>
+          </>
         }
       />
       <div style={{ flex: 1, display: 'flex', gap: 14, padding: '2px 22px 18px', minHeight: 0 }}>

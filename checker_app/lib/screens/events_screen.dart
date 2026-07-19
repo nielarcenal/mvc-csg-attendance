@@ -15,7 +15,7 @@ class EventsScreen extends StatefulWidget {
   State<EventsScreen> createState() => _EventsScreenState();
 }
 
-class _EventsScreenState extends State<EventsScreen> {
+class _EventsScreenState extends State<EventsScreen> with WidgetsBindingObserver {
   final _session = ScanSession();
   List<repo.AssignedEvent> _assignments = const [];
   bool _loading = true;
@@ -28,7 +28,21 @@ class _EventsScreenState extends State<EventsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadAssignments();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Session 11 §D Refresh: re-check assignments when the app comes back
+  // to the foreground (sessions may have been edited on the dashboard).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadAssignments();
   }
 
   Future<void> _loadAssignments() async {
@@ -80,13 +94,112 @@ class _EventsScreenState extends State<EventsScreen> {
   Future<void> _startScanning() async {
     final today = _today;
     if (today == null) return;
-    _session.eventName = today.name;
-    _session.windowLine = today.windowLine;
-    _session.checkingClosesAt = today.closesAt;
-    await _session.startEvent(eventId: today.id, school: today.school);
+    // A3/§D: multi-session events ask which session to scan for; the one
+    // whose window contains "now" (or the next upcoming) is the default.
+    repo.EventSession? session = today.defaultSession;
+    if (today.sessions.length > 1) {
+      session = await _pickSession(today);
+      if (session == null) return; // sheet dismissed
+    }
+    await _beginScanning(today, session);
+  }
+
+  Future<repo.EventSession?> _pickSession(repo.AssignedEvent event) {
+    final fallback = event.defaultSession;
+    return showModalBottomSheet<repo.EventSession>(
+      context: context,
+      backgroundColor: T.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Which session?', style: T.display(17)),
+              const SizedBox(height: 2),
+              Text(event.name, style: T.ui(11.5, color: T.text2)),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final s in event.sessions) ...[
+                      GestureDetector(
+                        onTap: () => Navigator.of(sheet).pop(s),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: s == fallback ? T.tint(T.checker, .1) : T.bg,
+                            border: Border.all(
+                                color: s == fallback ? T.checker : Colors.transparent,
+                                width: 1.5),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                        s.program.isEmpty
+                                            ? '${s.dateLabel} · Attendance check'
+                                            : '${s.dateLabel} · ${s.program}',
+                                        style: T.ui(12.5, weight: FontWeight.w800)),
+                                    const SizedBox(height: 1),
+                                    Text(
+                                        '${s.windowLine} · '
+                                        '${s.inOnly ? 'check-in only' : 'check-in & out'}'
+                                        '${s.venue.isNotEmpty ? ' · ${s.venue}' : ''}',
+                                        style: T.ui(10.5, color: T.text2)),
+                                  ],
+                                ),
+                              ),
+                              if (s.openNow)
+                                StatusChip.green('● Open now')
+                              else if (s == fallback)
+                                StatusChip.green('Next up'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _beginScanning(
+      repo.AssignedEvent event, repo.EventSession? session) async {
+    final label = session == null
+        ? null
+        : '${session.dateLabel}'
+            '${session.program.isNotEmpty ? ' · ${session.program}' : ''}';
+    _session.eventName = event.name;
+    _session.windowLine = session == null
+        ? event.windowLine
+        : '$label · ${session.windowLine}';
+    _session.checkingClosesAt = session?.closesAt ?? event.closesAt;
+    await _session.startEvent(
+      eventId: event.id,
+      school: event.school,
+      sessionId: session?.id,
+      sessionLabel: label,
+      inOnly: session?.inOnly ?? false,
+      audienceSchools: event.audienceSchools,
+    );
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ScanScreen(session: _session, school: today.school),
+      builder: (_) => ScanScreen(session: _session, school: event.school),
     ));
   }
 
@@ -179,6 +292,36 @@ class _EventsScreenState extends State<EventsScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
               children: [
+                // Session 11 addition #2: offline validation trusts this
+                // device's clock — surface real drift loudly.
+                if (clockSkewed) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: T.tint(T.alert, .14),
+                      border: Border.all(color: T.alert, width: 1.5),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.schedule_rounded, size: 18, color: T.alertDeep),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            'This device’s clock is ${clockSkewSeconds!.abs()}s '
+                            '${clockSkewSeconds! > 0 ? 'ahead of' : 'behind'} the server '
+                            '(measured at the last roster download). Fix the phone’s '
+                            'date & time — scan times and QR-code expiry depend on it.',
+                            style: T.ui(11, weight: FontWeight.w600,
+                                color: T.alertDeep, height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (_loading)
                   const Padding(
                     padding: EdgeInsets.only(top: 60),

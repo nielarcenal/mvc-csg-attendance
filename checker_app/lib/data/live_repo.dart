@@ -6,6 +6,9 @@
 /// Without the defines the app stays in demo mode.
 library;
 
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'scan_store.dart';
 
@@ -82,6 +85,35 @@ Future<String?> signIn(String email, String password) async {
   }
 }
 
+/// One checking session of an event (FEATURE_BATCH_2 A3/§D) — the scan
+/// screen records against a session, not the whole event.
+class EventSession {
+  const EventSession({
+    required this.id,
+    required this.opensAt,
+    required this.closesAt,
+    required this.program,
+    required this.venue,
+    required this.inOnly,
+    required this.dateLabel,
+    required this.windowLine,
+  });
+
+  final String id;
+  final DateTime opensAt;
+  final DateTime closesAt;
+  final String program; // '' when unnamed
+  final String venue;
+  final bool inOnly;    // in_only sessions have no time-out
+  final String dateLabel;   // "Jul 21"
+  final String windowLine;  // "8:00 AM – 10:00 AM"
+
+  bool get openNow {
+    final now = DateTime.now();
+    return !now.isBefore(opensAt) && !now.isAfter(closesAt);
+  }
+}
+
 class AssignedEvent {
   const AssignedEvent({
     required this.id,
@@ -92,6 +124,8 @@ class AssignedEvent {
     required this.school,
     required this.openNow,
     required this.closesAt,
+    this.sessions = const [],
+    this.audienceSchools,
   });
 
   final String id;
@@ -102,6 +136,26 @@ class AssignedEvent {
   final String school; // the school this checker covers (amendment #1)
   final bool openNow;
   final DateTime closesAt; // checking window close — late scans go for review
+
+  /// Ordered checking sessions; empty only for legacy events without rows.
+  final List<EventSession> sessions;
+
+  /// A4 audience: school codes when by_school, null = all students.
+  final List<String>? audienceSchools;
+
+  /// The session a checker most likely wants right now: the one whose
+  /// window contains "now", else the next upcoming, else the last.
+  EventSession? get defaultSession {
+    if (sessions.isEmpty) return null;
+    final now = DateTime.now();
+    for (final s in sessions) {
+      if (s.openNow) return s;
+    }
+    for (final s in sessions) {
+      if (s.opensAt.isAfter(now)) return s;
+    }
+    return sessions.last;
+  }
 }
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -112,19 +166,66 @@ String _time(DateTime d) {
   return '$h:${l.minute.toString().padLeft(2, '0')} ${l.hour < 12 ? 'AM' : 'PM'}';
 }
 
+const _assignmentsKey = 'assignments_cache_v1';
+
+/// Assignments (with their sessions + audience) persist alongside the
+/// roster so the session picker works after an offline restart. The cache
+/// is overwritten on every successful load — a session edited on the
+/// dashboard replaces the stale copy on the next refresh (§D cache
+/// invalidation).
 Future<List<AssignedEvent>> loadAssignments() async {
   if (!hasBackend) return const [];
-  final rows = List<Map<String, dynamic>>.from(await client
-      .from('event_checkers')
-      .select('school, events(*)')
-      .eq('profile_id', client.auth.currentUser!.id));
+  List<Map<String, dynamic>> rows;
+  try {
+    rows = List<Map<String, dynamic>>.from(await client
+        .from('event_checkers')
+        .select('school, events(*, event_sessions(*), event_schools(school_code))')
+        .eq('profile_id', client.auth.currentUser!.id));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_assignmentsKey, jsonEncode(rows));
+  } catch (_) {
+    // Offline — the last cached assignments still allow scanning.
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_assignmentsKey);
+    if (raw == null) rethrow;
+    rows = (jsonDecode(raw) as List)
+        .map((r) => Map<String, dynamic>.from(r as Map))
+        .toList();
+  }
+  return _parseAssignments(rows);
+}
+
+List<AssignedEvent> _parseAssignments(List<Map<String, dynamic>> rows) {
   final now = DateTime.now();
-  final events = rows.where((r) => r['events'] != null).map((r) {
-    final e = r['events'] as Map<String, dynamic>;
+  return rows.where((r) => r['events'] != null).map((r) {
+    final e = Map<String, dynamic>.from(r['events'] as Map);
     final starts = DateTime.parse(e['starts_at'] as String).toLocal();
     final opens = DateTime.parse(e['checking_opens_at'] as String).toLocal();
     final closes = DateTime.parse(e['checking_closes_at'] as String).toLocal();
     final ends = DateTime.parse(e['ends_at'] as String).toLocal();
+    final sessions = ((e['event_sessions'] as List?) ?? const [])
+        .map((s) => Map<String, dynamic>.from(s as Map))
+        .map((s) {
+          final sOpens = DateTime.parse(s['checking_opens_at'] as String).toLocal();
+          final sCloses = DateTime.parse(s['checking_closes_at'] as String).toLocal();
+          return EventSession(
+            id: s['id'] as String,
+            opensAt: sOpens,
+            closesAt: sCloses,
+            program: (s['program'] ?? '') as String,
+            venue: (s['venue'] ?? '') as String,
+            inOnly: s['mode'] == 'in_only',
+            dateLabel: '${_months[sOpens.month - 1]} ${sOpens.day}',
+            windowLine: '${_time(sOpens)} – ${_time(sCloses)}',
+          );
+        })
+        .toList()
+      ..sort((a, b) => a.opensAt.compareTo(b.opensAt));
+    final audience = e['audience_type'] == 'by_school'
+        ? ((e['event_schools'] as List?) ?? const [])
+            .map((s) => (s as Map)['school_code'] as String)
+            .toList()
+        : null;
     return AssignedEvent(
       id: e['id'] as String,
       name: e['name'] as String,
@@ -134,10 +235,11 @@ Future<List<AssignedEvent>> loadAssignments() async {
       school: r['school'] as String,
       openNow: now.isAfter(opens) && now.isBefore(ends),
       closesAt: closes,
+      sessions: sessions,
+      audienceSchools: audience,
     );
   }).toList()
     ..sort((a, b) => (b.openNow ? 1 : 0) - (a.openNow ? 1 : 0));
-  return events;
 }
 
 /// Downloads the full active roster into the local cache used for offline
@@ -150,7 +252,7 @@ Future<void> refreshRoster() async {
     rows = List<Map<String, dynamic>>.from(await client
         .from('students')
         .select('id, student_no, full_name, course, year_level, section, '
-            'qr_token, rfid_uid, qr_active, qr_expires_at')
+            'school_id, qr_token, rfid_uid, qr_active, qr_expires_at')
         .eq('active', true)
         .order('full_name'));
     // The ed25519 public key rides with the roster bundle so dynamic
@@ -159,6 +261,14 @@ Future<void> refreshRoster() async {
         .from('settings').select('value').eq('key', 'qr_public_key').maybeSingle();
     final key = keyRow?['value'];
     if (key is String && key.isNotEmpty) qrPublicKey = key;
+    // Session 11 addition #2: stamp the server clock with the download.
+    // Offline validation trusts the device clock (pass expiry, scan
+    // times) — a drifted clock gets a visible warning, not silent damage.
+    try {
+      final serverNow = DateTime.parse((await client.rpc('server_time')) as String);
+      clockSkewSeconds =
+          DateTime.now().toUtc().difference(serverNow.toUtc()).inSeconds;
+    } catch (_) {/* rpc unavailable — keep the last measured skew */}
   } catch (_) {
     await restoreRoster(); // offline — use the last cached roster
     return;
@@ -179,6 +289,7 @@ Future<void> refreshRoster() async {
                 '${s['course'] ?? ''} ${s['year_level'] ?? ''}-${s['section'] ?? ''}'.trim(),
             initials: initialsOf(s['full_name'] as String),
             colorSeed: (s['student_no'] as String).hashCode % 4,
+            schoolId: s['school_id'] as String?,
             qrToken: s['qr_token'] as String?,
             rfidUid: s['rfid_uid'] as String?,
             qrActive: (s['qr_active'] as bool?) ?? true,

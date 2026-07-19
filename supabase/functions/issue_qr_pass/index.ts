@@ -1,7 +1,7 @@
 // issue_qr_pass — dynamic QR passes (FEATURE_BATCH_2 A5).
 //
 // The signed pass is what kills screenshot sharing: it expires after a
-// short TTL (settings.qr_pass_ttl_seconds, default 150) and checkers
+// short TTL (settings.qr_pass_ttl_seconds, default 600) and checkers
 // verify the ed25519 signature OFFLINE against the public key bundled
 // with their roster cache.
 //
@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
 
   const { data: ttlRow } = await admin
     .from('settings').select('value').eq('key', 'qr_pass_ttl_seconds').single();
-  const ttl = Math.max(30, parseInt(String(ttlRow?.value ?? '150').replace(/"/g, ''), 10) || 150);
+  const ttl = Math.max(30, parseInt(String(ttlRow?.value ?? '600').replace(/"/g, ''), 10) || 600);
 
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + ttl;

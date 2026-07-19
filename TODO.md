@@ -38,16 +38,14 @@ with the real implementation.
 - **QR card name auto-fit** (§7 overflow): FEATURE_BATCH_2 Session 9 item.
 - **Sortable tables + URL sort state** (§8 "where meaningful"): specified as
   part of FEATURE_BATCH_2 Session 9 (school/year/course/name sorting).
-- **Audit log date-range filter**: Session 11 (viewer now shows full
-  date+time and filters by actor/table/action).
 
 ## FEATURE_BATCH_2 transition (backend landed Session 8, 2026-07-18)
-- **Clients not yet session-aware.** The DB is session-level
-  (event_sessions, attendance.session_id); deployed clients still scan at
-  event level. `upsert_scan` resolves the session server-side from
-  scanned_at, so old checker builds keep working — but the checker session
-  picker, student per-day schedule, and event maker session editor are
-  Sessions 9–11 (see NEXT_STEPS.md).
+- **All clients are session-aware as of Session 11** (checker session
+  picker + per-session scans, student per-day schedule, event maker
+  session editor). `upsert_scan` still accepts session-less calls
+  (resolves from scanned_at) so PREVIOUSLY DEPLOYED Android checker builds
+  keep syncing — rebuild the APKs to pick up the session picker (owed with
+  the Session 12 device pass).
 - **`full_name` is a trigger-synced legacy mirror** on profiles/students.
   Drop the column (and the sync trigger) once no client reads or writes it.
 - **Dashboard CSV import and student-create will fail for new students until
@@ -63,4 +61,14 @@ with the real implementation.
   public key in `settings.qr_public_key`.
 - **Real-device airplane-mode scan test still owed** for QR v2 acceptance
   (no Android device was attached); Android APKs need a rebuild to carry
-  the v2 code. Fold into Session 12 regression.
+  the v2 + session-picker code. Fold into Session 12 regression.
+- **Display-name helper (A1) is satisfied by the DB-level `full_name`
+  mirror**, which every client reads; the mirror column therefore CANNOT
+  be dropped yet. Dropping it means adding a client-side helper over the
+  name parts first — do it deliberately, not as cleanup.
+- **Session 11 owner additions shipped 2026-07-19** (not gaps — recorded
+  here because they amend earlier spec text): dynamic-QR TTL default is
+  now 600s (FEATURE_BATCH_2 said 150s); checker warns when its clock is
+  >30s off the server (measured at roster download via `server_time()`);
+  the student app shows the last issued pass after an offline reopen with
+  an honest countdown/expired state.

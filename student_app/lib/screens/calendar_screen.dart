@@ -34,6 +34,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     final now = DateTime.now();
     _month = DateTime(now.year, now.month);
+    repo.dataVersion.addListener(_onData); // repaint on silent auto-refresh
+  }
+
+  void _onData() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    repo.dataVersion.removeListener(_onData);
+    super.dispose();
   }
 
   Color _dotColor(CalStatus s) => switch (s) {

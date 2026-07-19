@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import '../data/live_repo.dart' as repo;
 import '../theme.dart';
 import 'home_screen.dart';
 import 'digital_id_screen.dart';
@@ -20,10 +23,47 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   late int _index = widget.initialIndex;
+  Timer? _autoRefresh;
 
   void goTo(int i) => setState(() => _index = i);
+
+  // Session 11 §C Refresh: silent refetch on app resume and every 60s while
+  // the app is foregrounded. Screens repaint via repo.dataVersion.
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _autoRefresh?.cancel();
+    _autoRefresh = Timer.periodic(
+        const Duration(seconds: 60), (_) => _silentRefresh());
+  }
+
+  Future<void> _silentRefresh() async {
+    try { await repo.refreshAll(); } catch (_) {/* offline — keep last data */}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _silentRefresh();
+      _startTimer();
+    } else if (state == AppLifecycleState.paused) {
+      _autoRefresh?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _autoRefresh?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

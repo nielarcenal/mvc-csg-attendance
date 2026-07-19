@@ -110,14 +110,58 @@ pattern — student login token (j.delacruz), expired pass (TTL→30, issue,
 wait 40s, TTL→150), Bea (2024-00318) static token + qr_active=false;
 RESTORE Bea + delete synced test rows after. Live DB left clean.
 
-## Session 11 — Reports, polish, self-service (NOT STARTED)
-xlsx student/event exports, audit viewer with full date+time + actor/table/
-date filters, Last login column (backend `list_users` is live already),
-auto+manual refresh on all clients, student change-password, per-day
-schedule in student event detail, display-name helper used everywhere.
-Note: checker session picker (batch-2 §D) is ALSO still unbuilt — the
-checker still scans at event level with the server resolving the session
-from scanned_at; roster cache does not yet invalidate on session changes.
+## Session 11 — Reports, polish, self-service ✅ DONE (2026-07-19)
+
+Everything browser-verified against live (drivers in dashboard/:
+`.drive-s11-dash.mjs`, `.drive-s11-student.mjs`, `.drive-s11-checker.mjs`
+— all PASS; run recipes in the file headers).
+
+**Dashboard:** Reports chooser at /reports (Batch QR moved to /reports/qr)
+— Event report (.xlsx sheet per session with Present/Late/Excused/Absent
+per roster student, audience-scoped; .csv flat with a Session column) and
+Student report (every session the student was in scope for, with summary
+counts); built with SheetJS, parsed back in the drive to prove Excel
+compatibility. Audit viewer: from/to date-range filter on top of
+actor/table/action (limit raised to 300). Accounts: LAST LOGIN column
+backed by `list_users` (5-min client cache so auto-refresh doesn't hammer
+the admin API). Manual ↻ Refresh buttons on Dashboard/Events/Review/
+Accounts/Audit/BatchQr/Live; silent auto-refetch every 30s + on window
+focus via `useLoadedState(..., { auto: true })` (Live keeps Realtime).
+
+**Student app:** Change password in Profile (current-password re-auth via
+signInWithPassword, new twice, per-field visibility toggles, live rule
+hints ≥8 chars/differs/matches; verified by real re-login: old refused,
+new works — then RESTORED to the seeded password via admin API). Event
+detail shows the per-day session schedule (program, venue, mode, window;
+day headers on multi-day). Auto-refresh: refreshAll every 60s + on app
+resume (HomeShell observer), screens repaint via `repo.dataVersion`.
+
+**Checker app (batch-2 §D, was unassigned):** roster bundle now carries
+event_sessions + audience via `loadAssignments` (persisted to
+`assignments_cache_v1` so the picker works after an offline restart; cache
+overwritten on every refresh + on app resume = §D invalidation). Session
+picker bottom-sheet on Start scanning (default = window containing now,
+else next upcoming); scans carry session_id through `upsert_scan
+p_session`; duplicate warm-up and blocking are per SESSION (verified: Bea
+duplicate on session 1, accepted on session 2, row landed with the picked
+session_id, status valid); in_only sessions hide the Time-out toggle
+("Check-in only session" pill); by_school audience refused locally at scan
+time (roster entries now carry school_id).
+
+**Session 11 additions (owner-requested 2026-07-19):**
+1. Dynamic-QR TTL default 150s → **600s** (migration 0004 updates the
+   setting only if still at the old default; issue_qr_pass v2 fallback
+   bumped; verified live — pass countdown starts at 600).
+2. **Clock-skew warning**: `server_time()` rpc (migration 0004); the
+   checker stamps server time at roster download and shows an orange
+   banner when the device clock is >30s off (persisted with the roster).
+   Verified by temporarily shifting server_time +120s → banner "clock is
+   120s behind the server"; function restored after.
+3. **Cached last pass**: the student app persists the last issued pass
+   (keyed to the user) + a minimal identity cache; an OFFLINE reopen now
+   lands on Home and My ID shows the cached pass with its live countdown,
+   or an honest grayed "Code expired" state (verified with all Supabase
+   requests aborted: countdown resumed at 591s after reload).
 
 ## Session 12 — Regression (NOT STARTED)
 Full offline walkthrough under the session model (download → airplane →

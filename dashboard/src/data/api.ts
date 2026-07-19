@@ -13,12 +13,17 @@ export { hasBackend };
 
 /** Loads via `loader`, starting from `fallback` (an empty state, never
  * sample data). `loading` is true until the first load settles. */
-export function useLoaded<T>(loader: () => Promise<T | null>, fallback: T, deps: unknown[] = []): T {
-  return useLoadedState(loader, fallback, deps).data;
+export function useLoaded<T>(
+  loader: () => Promise<T | null>, fallback: T, deps: unknown[] = [],
+  opts: { auto?: boolean } = {},
+): T {
+  return useLoadedState(loader, fallback, deps, opts).data;
 }
 
-export function useLoadedState<T>(loader: () => Promise<T | null>, fallback: T, deps: unknown[] = []):
-  { data: T; loading: boolean; error: boolean; retry: () => void } {
+export function useLoadedState<T>(
+  loader: () => Promise<T | null>, fallback: T, deps: unknown[] = [],
+  opts: { auto?: boolean } = {},
+): { data: T; loading: boolean; error: boolean; retry: () => void } {
   const [data, setData] = useState<T>(fallback);
   const [loading, setLoading] = useState(hasBackend);
   const [error, setError] = useState(false);
@@ -35,6 +40,16 @@ export function useLoadedState<T>(loader: () => Promise<T | null>, fallback: T, 
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, attempt]);
+  // Session 11 §B Refresh: list views silently refetch every 30s and on
+  // window focus (a refetch bumps `attempt`; `loading` stays false so the
+  // table never flickers). Realtime-subscribed pages don't opt in.
+  useEffect(() => {
+    if (!opts.auto || !hasBackend) return;
+    const tick = () => setAttempt((n) => n + 1);
+    const iv = setInterval(tick, 30_000);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(iv); window.removeEventListener('focus', tick); };
+  }, [opts.auto]);
   return { data, loading, error, retry: () => setAttempt((n) => n + 1) };
 }
 
@@ -462,11 +477,38 @@ export async function decideReview(id: string, approve: boolean): Promise<string
 }
 
 // ── accounts ────────────────────────────────────────────────────────
+// A8: last-login times come from auth.users via the edge function (service
+// role only) — cached for 5 minutes so the 30s auto-refresh doesn't hammer
+// the admin API.
+let lastLoginCache: { at: number; byId: Map<string, string> } | null = null;
+async function loadLastLogins(): Promise<Map<string, string>> {
+  if (lastLoginCache && Date.now() - lastLoginCache.at < 300_000) return lastLoginCache.byId;
+  if (!supabase) return new Map();
+  try {
+    const { data } = await supabase.functions.invoke('provision-account',
+      { body: { action: 'list_users' } });
+    const byId = new Map<string, string>();
+    for (const u of data?.users ?? []) {
+      if (u.id && u.last_sign_in_at) byId.set(u.id, u.last_sign_in_at);
+    }
+    lastLoginCache = { at: Date.now(), byId };
+    return byId;
+  } catch {
+    return lastLoginCache?.byId ?? new Map(); // stale beats broken
+  }
+}
+
+const fmtLastLogin = (iso: string | undefined) => (iso
+  ? new Date(iso).toLocaleString('en-PH',
+    { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  : '—');
+
 export async function loadAccounts(): Promise<AccountRow[] | null> {
   if (!supabase) return null;
-  const [{ data: profiles }, { data: students }] = await Promise.all([
+  const [{ data: profiles }, { data: students }, lastLogins] = await Promise.all([
     supabase.from('profiles').select('*'),
     supabase.from('students').select('*').eq('active', true),
+    loadLastLogins(),
   ]);
   if (!profiles) return null;
   const byProfile = new Map((students ?? []).map((s: any) => [s.profile_id, s]));
@@ -504,7 +546,7 @@ export async function loadAccounts(): Promise<AccountRow[] | null> {
       course: s ? `${s.course ?? ''} ${s.year_level ?? ''}-${s.section ?? ''}`.trim() : '—',
       yearLevel: s?.year_level ?? null,
       sortName: sortNameOf(s, p.full_name),
-      status, statusLabel, lastLogin: '—',
+      status, statusLabel, lastLogin: fmtLastLogin(lastLogins.get(p.id)),
       role: roleMap[p.role] ?? 'student',
       student: s ? detailOf(s) : undefined,
     };
@@ -710,7 +752,7 @@ export async function loadAudit(): Promise<AuditRow[] | null> {
   if (!supabase) return null;
   const { data } = await supabase.from('audit_log')
     .select('*, actor:profiles(full_name)')
-    .order('created_at', { ascending: false }).limit(60);
+    .order('created_at', { ascending: false }).limit(300);
   if (!data) return null;
   const tone: Record<string, AuditRow['actionTone']> =
     { INSERT: 'blue', UPDATE: 'purple', DELETE: 'red' };
@@ -725,6 +767,7 @@ export async function loadAudit(): Promise<AuditRow[] | null> {
       time: new Date(r.created_at).toLocaleString('en-PH', {
         month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
       }),
+      createdAt: r.created_at as string,
       actor: r.actor?.full_name ?? 'system',
       action: r.action, actionTone: tone[r.action] ?? 'dark',
       record: `${r.table_name} · ${String(r.record_id).slice(0, 8)}`,
@@ -775,6 +818,200 @@ export async function loadQrCards(): Promise<QrCard[] | null> {
     no: s.student_no,
     course: `${s.course ?? ''} ${s.year_level ?? ''}-${s.section ?? ''}`.trim(),
   })));
+}
+
+// ── reports (Session 11): student / event exports ───────────────────
+// Both reports work at SESSION level (FEATURE_BATCH_2 A3): a student's
+// status is computed per session — valid in-scan → Present, for_review /
+// approved → Late, none → Absent (Excused when an approved excuse covers
+// the event).
+
+export interface ReportFacets {
+  students: { id: string; name: string; no: string; school: string }[];
+  events: { id: string; name: string; date: string }[];
+}
+
+export async function loadReportFacets(): Promise<ReportFacets | null> {
+  if (!supabase) return null;
+  const [{ data: students }, { data: events }] = await Promise.all([
+    supabase.from('students').select('id, full_name, student_no, school_id')
+      .eq('active', true).order('full_name'),
+    supabase.from('events').select('id, name, starts_at')
+      .neq('active', false).order('starts_at', { ascending: false }),
+  ]);
+  if (!students || !events) return null;
+  return {
+    students: (students as any[]).map((s) => ({
+      id: s.id, name: s.full_name, no: s.student_no, school: s.school_id ?? '—',
+    })),
+    events: (events as any[]).map((e) => ({
+      id: e.id, name: e.name, date: fmtDate(e.starts_at),
+    })),
+  };
+}
+
+interface SessionRow {
+  id: string; event_id: string; session_date: string; program: string | null;
+  venue: string | null; mode: 'in_out' | 'in_only';
+  checking_opens_at: string; checking_closes_at: string; sort_order: number;
+}
+
+function sessionLabel(s: SessionRow): string {
+  const d = new Date(s.session_date + 'T00:00:00')
+    .toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+  return s.program ? `${d} · ${s.program}` : d;
+}
+
+function statusOf(inScan: any | undefined, excused: boolean):
+  { status: string; late: boolean } {
+  if (!inScan) return { status: excused ? 'Excused' : 'Absent', late: false };
+  if (inScan.status === 'valid') return { status: 'Present', late: false };
+  if (inScan.status === 'for_review') return { status: 'Late (for review)', late: true };
+  if (inScan.status === 'approved') return { status: 'Late (approved)', late: true };
+  return { status: excused ? 'Excused' : 'Rejected', late: true };
+}
+
+/** One student's attendance across every event/session they were part of
+ * (audience-scoped: by_school events they're outside of are skipped). */
+export interface StudentReport {
+  student: { name: string; no: string; school: string; course: string };
+  rows: {
+    event: string; session: string; date: string; status: string;
+    timeIn: string; timeOut: string; method: string; checker: string; note: string;
+  }[];
+  summary: { sessions: number; present: number; late: number; excused: number; absent: number };
+}
+
+export async function loadStudentReport(studentId: string): Promise<StudentReport | null> {
+  if (!supabase) return null;
+  const [{ data: s }, { data: events }, { data: sessions }, { data: eventSchools },
+    { data: scans }, { data: excuses }] = await Promise.all([
+    supabase.from('students').select('*').eq('id', studentId).single(),
+    supabase.from('events').select('*').neq('active', false).order('starts_at'),
+    supabase.from('event_sessions').select('*').order('session_date').order('sort_order'),
+    supabase.from('event_schools').select('event_id, school_code'),
+    supabase.from('attendance')
+      .select('*, checker:profiles!attendance_checker_id_fkey(full_name)')
+      .eq('student_id', studentId),
+    supabase.from('excuses').select('event_id, status').eq('student_id', studentId),
+  ]);
+  if (!s || !events) return null;
+  const schoolsByEvent = new Map<string, string[]>();
+  for (const r of (eventSchools ?? []) as any[]) {
+    schoolsByEvent.set(r.event_id, [...(schoolsByEvent.get(r.event_id) ?? []), r.school_code]);
+  }
+  const excusedEvents = new Set((excuses ?? [])
+    .filter((x: any) => x.status === 'approved').map((x: any) => x.event_id));
+  const now = Date.now();
+  const rows: StudentReport['rows'] = [];
+  const summary = { sessions: 0, present: 0, late: 0, excused: 0, absent: 0 };
+  for (const e of events as any[]) {
+    if (e.audience_type === 'by_school'
+      && !(schoolsByEvent.get(e.id) ?? []).includes(s.school_id)) continue;
+    for (const sess of (sessions ?? []).filter((x: any) => x.event_id === e.id) as SessionRow[]) {
+      // Sessions that haven't opened yet say nothing about attendance.
+      if (new Date(sess.checking_opens_at).getTime() > now) continue;
+      const inScan = (scans ?? []).find((a: any) =>
+        a.session_id === sess.id && a.scan_type === 'in');
+      const outScan = (scans ?? []).find((a: any) =>
+        a.session_id === sess.id && a.scan_type === 'out');
+      const st = statusOf(inScan, excusedEvents.has(e.id));
+      summary.sessions++;
+      if (st.status === 'Present') summary.present++;
+      else if (st.status.startsWith('Late')) summary.late++;
+      else if (st.status === 'Excused') summary.excused++;
+      else summary.absent++;
+      rows.push({
+        event: e.name, session: sess.program ?? '—',
+        date: sessionLabel(sess),
+        status: st.status,
+        timeIn: inScan ? fmtTime(inScan.scanned_at) : '—',
+        timeOut: sess.mode === 'in_out' ? (outScan ? fmtTime(outScan.scanned_at) : '—') : 'n/a',
+        method: inScan ? (METHOD_MAP[inScan.method] ?? inScan.method) : '—',
+        checker: inScan?.checker?.full_name ?? '—',
+        note: inScan?.note ?? '',
+      });
+    }
+  }
+  return {
+    student: {
+      name: s.full_name, no: s.student_no, school: s.school_id ?? '—',
+      course: `${s.course ?? ''} ${s.year_level ?? ''}-${s.section ?? ''}`.trim(),
+    },
+    rows, summary,
+  };
+}
+
+/** One event: a sheet per session with the audience-scoped roster and each
+ * student's status, method and checker. */
+export interface EventReport {
+  event: { name: string; venue: string; dates: string };
+  sessions: {
+    label: string; mode: 'in_out' | 'in_only'; window: string;
+    counts: { present: number; late: number; excused: number; absent: number };
+    rows: {
+      no: string; name: string; school: string; status: string;
+      timeIn: string; timeOut: string; method: string; checker: string; note: string;
+    }[];
+  }[];
+}
+
+export async function loadEventReport(eventId: string): Promise<EventReport | null> {
+  if (!supabase) return null;
+  const [{ data: e }, { data: sessions }, { data: eventSchools }, { data: students },
+    { data: scans }, { data: excuses }] = await Promise.all([
+    supabase.from('events').select('*').eq('id', eventId).single(),
+    supabase.from('event_sessions').select('*').eq('event_id', eventId)
+      .order('session_date').order('sort_order'),
+    supabase.from('event_schools').select('school_code').eq('event_id', eventId),
+    supabase.from('students').select('id, full_name, student_no, school_id')
+      .eq('active', true).order('full_name'),
+    supabase.from('attendance')
+      .select('*, checker:profiles!attendance_checker_id_fkey(full_name)')
+      .eq('event_id', eventId),
+    supabase.from('excuses').select('student_id, status').eq('event_id', eventId),
+  ]);
+  if (!e || !sessions) return null;
+  const audience = e.audience_type === 'by_school'
+    ? new Set((eventSchools ?? []).map((r: any) => r.school_code)) : null;
+  const roster = (students ?? []).filter((s: any) =>
+    !audience || audience.has(s.school_id));
+  const excusedStudents = new Set((excuses ?? [])
+    .filter((x: any) => x.status === 'approved').map((x: any) => x.student_id));
+  return {
+    event: {
+      name: e.name, venue: e.venue ?? '—',
+      dates: `${e.start_date ?? fmtDate(e.starts_at)} – ${e.end_date ?? fmtDate(e.ends_at)}`,
+    },
+    sessions: (sessions as SessionRow[]).map((sess) => {
+      const counts = { present: 0, late: 0, excused: 0, absent: 0 };
+      const rows = roster.map((s: any) => {
+        const inScan = (scans ?? []).find((a: any) =>
+          a.session_id === sess.id && a.student_id === s.id && a.scan_type === 'in');
+        const outScan = (scans ?? []).find((a: any) =>
+          a.session_id === sess.id && a.student_id === s.id && a.scan_type === 'out');
+        const st = statusOf(inScan, excusedStudents.has(s.id));
+        if (st.status === 'Present') counts.present++;
+        else if (st.status.startsWith('Late')) counts.late++;
+        else if (st.status === 'Excused') counts.excused++;
+        else counts.absent++;
+        return {
+          no: s.student_no, name: s.full_name, school: s.school_id ?? '—',
+          status: st.status,
+          timeIn: inScan ? fmtTime(inScan.scanned_at) : '—',
+          timeOut: sess.mode === 'in_out' ? (outScan ? fmtTime(outScan.scanned_at) : '—') : 'n/a',
+          method: inScan ? (METHOD_MAP[inScan.method] ?? inScan.method) : '—',
+          checker: inScan?.checker?.full_name ?? '—',
+          note: inScan?.note ?? '',
+        };
+      });
+      return {
+        label: sessionLabel(sess), mode: sess.mode,
+        window: fmtWindow(sess.checking_opens_at, sess.checking_closes_at),
+        counts, rows,
+      };
+    }),
+  };
 }
 
 // ── dashboard stats ─────────────────────────────────────────────────

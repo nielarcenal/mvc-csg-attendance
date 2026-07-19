@@ -9,7 +9,7 @@ import {
   updateStudent, regenerateQrToken, downloadCsv, CSV_HEADER,
 } from '../data/api';
 
-const GRID = '1.9fr .85fr .7fr .95fr 1.4fr';
+const GRID = '1.9fr .8fr .6fr .85fr .85fr 1.3fr';
 
 // FEATURE_BATCH_2 §B: students sortable by school, year level, course and
 // name A–Z; the choice lives in the URL so it survives refresh/share.
@@ -47,7 +47,8 @@ export default function Accounts() {
     { kind: 'deactivate' | 'reset' | 'restore'; name: string; email: string } | null>(null);
   const [editing, setEditing] = useState<{ detail: StudentDetail; name: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const { data: accounts, loading, error: loadFailed, retry } = useLoadedState(loadAccounts, [], [reload]);
+  const { data: accounts, loading, error: loadFailed, retry } =
+    useLoadedState(loadAccounts, [], [reload], { auto: true });
 
   const [params, setParams] = useSearchParams();
   const sortKey = (params.get('sort') ?? 'name') as SortKey;
@@ -120,6 +121,7 @@ export default function Accounts() {
         subtitle="Credentials go out as email activation links — created server-side, never plaintext passwords"
         actions={
           <>
+            <button className="pill-btn" style={{ padding: '8px 14px', fontSize: 11.5 }} onClick={retry}>↻ Refresh</button>
             <button className="pill-btn ghost" onClick={() => setModalRole('checker')}>+ Invite checker</button>
             <button className="pill-btn ghost" onClick={() => setModalRole('student')}>+ Add student</button>
             <input
@@ -211,7 +213,7 @@ export default function Accounts() {
           >
             SCHOOL{arrow('school')}
           </div>
-          <div>STATUS</div><div>ACTIONS</div>
+          <div>STATUS</div><div>LAST LOGIN</div><div>ACTIONS</div>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
           {rows.map((a) => (
@@ -237,6 +239,10 @@ export default function Accounts() {
                   : <span title={SCHOOLS.find((s) => s.code === a.school)?.name}>{a.school}</span>}
               </div>
               <div><span className={STATUS_CHIP[a.status]} style={{ padding: '3px 10px' }}>{a.statusLabel}</span></div>
+              {/* A8: real auth.users.last_sign_in_at via the edge function */}
+              <div style={{ fontWeight: 600, color: a.lastLogin === '—' ? 'var(--muted)' : 'var(--text-2)' }}>
+                {a.lastLogin}
+              </div>
               <div style={{ opacity: busyEmail === a.email ? 0.5 : 1, fontSize: 10.5, fontWeight: 700, color: 'var(--muted)' }}>
                 {a.student && (
                   <>

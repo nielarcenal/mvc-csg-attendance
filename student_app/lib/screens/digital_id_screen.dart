@@ -29,6 +29,22 @@ class _DigitalIdScreenState extends State<DigitalIdScreen> {
   int _remaining = 0;
 
   @override
+  void initState() {
+    super.initState();
+    // Session 11 addition #3: reopening the app (even offline) shows the
+    // last issued pass — live countdown if still valid, honest grayed-out
+    // "Code expired" otherwise. Never a fake-fresh code.
+    repo.loadCachedQrPass().then((p) {
+      if (!mounted || p == null || _pass != null) return;
+      setState(() {
+        _pass = p;
+        _remaining = math.max(0, p.exp - _nowEpoch);
+      });
+      if (_remaining > 0) _startTicker();
+    });
+  }
+
+  @override
   void dispose() {
     _tick?.cancel();
     super.dispose();
@@ -41,6 +57,17 @@ class _DigitalIdScreenState extends State<DigitalIdScreen> {
 
   int get _nowEpoch => DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
 
+  void _startTicker() {
+    _tick?.cancel();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final p = _pass;
+      if (p == null) return;
+      setState(() => _remaining = math.max(0, p.exp - _nowEpoch));
+      if (_remaining <= 0) _tick?.cancel();
+    });
+  }
+
   Future<void> _generate() async {
     if (_generating) return;
     setState(() { _generating = true; _error = null; });
@@ -50,14 +77,7 @@ class _DigitalIdScreenState extends State<DigitalIdScreen> {
       setState(() { _generating = false; _error = res.error; });
       return;
     }
-    _tick?.cancel();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      final p = _pass;
-      if (p == null) return;
-      setState(() => _remaining = math.max(0, p.exp - _nowEpoch));
-      if (_remaining <= 0) _tick?.cancel();
-    });
+    _startTicker();
     setState(() {
       _generating = false;
       _pass = res.pass;

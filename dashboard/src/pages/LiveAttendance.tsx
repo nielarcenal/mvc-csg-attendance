@@ -81,6 +81,10 @@ export default function LiveAttendance() {
           <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 2 }}>{view.event.sub}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="pill-btn" style={{ padding: '7px 14px', fontSize: 11 }}
+            onClick={() => setAttempt((n) => n + 1)}>
+            ↻ Refresh
+          </button>
           {!view.event.closed ? (
             <span className="chip green" style={{ padding: '6px 13px', fontSize: 11 }}>
               <span style={{ animation: 'pulse 1.6s infinite' }}>●</span> Live

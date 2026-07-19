@@ -12,6 +12,7 @@ dependencies:
   google_fonts: ^6.2.1
   image_picker: ^1.1.2
   qr_flutter: ^4.1.0
+  shared_preferences: ^2.3.2
   supabase_flutter: ^2.15.4
 
 # app_links >= 6.4 needs a newer Android Gradle Plugin than Flutter 3.24.5

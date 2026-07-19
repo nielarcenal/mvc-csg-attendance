@@ -7,8 +7,10 @@
 /// sample data (CLAUDE.md hard rule 1).
 library;
 
-import 'dart:typed_data';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models.dart';
 
@@ -47,12 +49,115 @@ Future<void> signOut() async {
   if (hasBackend) await _db.auth.signOut();
 }
 
+/// Bumped after every successful [refreshAll] — screens listen to repaint
+/// with fresh globals (Session 11 §C auto-refresh).
+final ValueNotifier<int> dataVersion = ValueNotifier<int>(0);
+
+/// UX §3 change-password: the current password is verified by re-signing
+/// in (Supabase's updateUser alone would accept any caller with a live
+/// session — e.g. a borrowed unlocked phone).
+Future<String?> changePassword(String current, String next) async {
+  if (!hasBackend) return 'App not configured.';
+  final email = _db.auth.currentUser?.email;
+  if (email == null) return 'Not signed in.';
+  try {
+    await _db.auth.signInWithPassword(email: email, password: current);
+  } on AuthException {
+    return 'Current password is wrong.';
+  } catch (_) {
+    return 'Could not reach the server — check your connection.';
+  }
+  try {
+    await _db.auth.updateUser(UserAttributes(password: next));
+    return null;
+  } on AuthException catch (e) {
+    return e.message;
+  } catch (_) {
+    return 'Could not change the password — check your connection.';
+  }
+}
+
 // ── dynamic QR passes (FEATURE_BATCH_2 A5) ─────────────────────────
 class QrPass {
   const QrPass({required this.pass, required this.exp, required this.ttl});
   final String pass; // "QP1.…" — rendered as the QR payload
   final int exp;     // epoch seconds
   final int ttl;     // seconds the pass lives
+}
+
+const _passCacheKey = 'qr_pass_cache_v1';
+const _studentCacheKey = 'student_cache_v1';
+
+/// Minimal identity cache so an OFFLINE app reopen still lands on Home
+/// with the student's name/number and their cached pass — instead of
+/// bouncing to the login screen it can't submit anyway.
+Future<void> _cacheStudentIdentity() async {
+  final uid = _db.auth.currentUser?.id;
+  if (uid == null) return;
+  final s = currentStudent;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_studentCacheKey, jsonEncode({
+    'uid': uid, 'fullName': s.fullName, 'firstName': s.firstName,
+    'studentNo': s.studentNo, 'course': s.course, 'qrToken': s.qrToken,
+    'qrMode': s.qrMode, 'qrActive': s.qrActive,
+  }));
+}
+
+/// Restores the cached identity for the signed-in user. Returns false when
+/// nothing usable is cached (first run, or another account's cache).
+Future<bool> restoreStudentCache() async {
+  final uid = _db.auth.currentUser?.id;
+  if (uid == null) return false;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_studentCacheKey);
+    if (raw == null) return false;
+    final j = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    if (j['uid'] != uid) return false;
+    currentStudent = Student(
+      fullName: j['fullName'] as String,
+      firstName: j['firstName'] as String,
+      studentNo: j['studentNo'] as String,
+      course: j['course'] as String,
+      qrToken: j['qrToken'] as String,
+      qrMode: (j['qrMode'] ?? 'dynamic') as String,
+      qrActive: (j['qrActive'] as bool?) ?? true,
+    );
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// The last issued pass survives app restarts so reopening OFFLINE still
+/// shows it — live countdown if it is still inside its TTL, an honest
+/// grayed-out "expired" state otherwise (Session 11 addition #3). Keyed to
+/// the signed-in user so a shared phone never shows someone else's pass.
+Future<void> _cacheQrPass(QrPass p) async {
+  final uid = _db.auth.currentUser?.id;
+  if (uid == null) return;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_passCacheKey,
+      jsonEncode({'uid': uid, 'pass': p.pass, 'exp': p.exp, 'ttl': p.ttl}));
+}
+
+Future<QrPass?> loadCachedQrPass() async {
+  final uid = _db.auth.currentUser?.id;
+  if (uid == null) return null;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_passCacheKey);
+    if (raw == null) return null;
+    final j = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    if (j['uid'] != uid) return null;
+    return QrPass(
+      pass: j['pass'] as String,
+      exp: (j['exp'] as num).toInt(),
+      ttl: (j['ttl'] as num).toInt(),
+    );
+  } catch (_) {
+    return null; // unreadable cache — behave as if none
+  }
 }
 
 /// Requests a signed pass from the issue_qr_pass edge function. Being
@@ -62,14 +167,13 @@ Future<({QrPass? pass, String? error})> issueQrPass() async {
   try {
     final res = await _db.functions.invoke('issue_qr_pass');
     final data = Map<String, dynamic>.from(res.data as Map);
-    return (
-      pass: QrPass(
-        pass: data['pass'] as String,
-        exp: (data['exp'] as num).toInt(),
-        ttl: (data['ttl'] as num).toInt(),
-      ),
-      error: null,
+    final pass = QrPass(
+      pass: data['pass'] as String,
+      exp: (data['exp'] as num).toInt(),
+      ttl: (data['ttl'] as num).toInt(),
     );
+    await _cacheQrPass(pass);
+    return (pass: pass, error: null);
   } on FunctionException catch (e) {
     final details = e.details;
     final msg = details is Map ? details['error']?.toString() : null;
@@ -380,6 +484,47 @@ Future<void> refreshAll() async {
     ));
   }
   notifications = notifs;
+  await _cacheStudentIdentity();
+  dataVersion.value++;
+}
+
+// ── per-day event schedule (FEATURE_BATCH_2 §C, from event_sessions) ─
+class EventSessionInfo {
+  const EventSessionInfo({
+    required this.dayLabel,
+    required this.program,
+    required this.venue,
+    required this.inOnly,
+    required this.windowLine,
+  });
+
+  final String dayLabel; // "Jul 21" — repeated per session, grouped by UI
+  final String program;  // "" when the session has no program name
+  final String venue;
+  final bool inOnly;     // in_only sessions have no time-out
+  final String windowLine;
+}
+
+Future<List<EventSessionInfo>> loadEventSessions(String eventId) async {
+  if (!hasBackend) return const [];
+  final rows = List<Map<String, dynamic>>.from(await _db
+      .from('event_sessions')
+      .select('session_date, program, venue, mode, checking_opens_at, checking_closes_at')
+      .eq('event_id', eventId)
+      .order('session_date')
+      .order('sort_order'));
+  return rows.map((s) {
+    final day = DateTime.parse(s['session_date'] as String);
+    final opens = DateTime.parse(s['checking_opens_at'] as String);
+    final closes = DateTime.parse(s['checking_closes_at'] as String);
+    return EventSessionInfo(
+      dayLabel: _date(day),
+      program: (s['program'] ?? '') as String,
+      venue: (s['venue'] ?? '') as String,
+      inOnly: s['mode'] == 'in_only',
+      windowLine: '${_time(opens)} – ${_time(closes)}',
+    );
+  }).toList();
 }
 
 // ── writes ──────────────────────────────────────────────────────────

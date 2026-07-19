@@ -32,7 +32,7 @@ export default function Events() {
   const [lifecycle, setLifecycle] = useState<
     { kind: 'delete' | 'archive' | 'unarchive'; event: EventRow } | null>(null);
   const [reload, setReload] = useState(0);
-  const { data: events, loading, error, retry } = useLoadedState(loadEvents, [], [reload]);
+  const { data: events, loading, error, retry } = useLoadedState(loadEvents, [], [reload], { auto: true });
 
   const closeOut = async (e: EventRow) => {
     setBusyId(e.id);
@@ -84,7 +84,10 @@ export default function Events() {
         title="Events"
         subtitle={`S.Y. 2026–27 · ${total} events`}
         actions={
-          <button className="pill-btn primary" onClick={() => navigate('/events/new')}>+ New event</button>
+          <>
+            <button className="pill-btn" style={{ padding: '8px 15px', fontSize: 11.5 }} onClick={retry}>↻ Refresh</button>
+            <button className="pill-btn primary" onClick={() => navigate('/events/new')}>+ New event</button>
+          </>
         }
       />
       <div style={{ display: 'flex', gap: 8, padding: '2px 22px 0', alignItems: 'center', flex: 'none' }}>

@@ -26,6 +26,7 @@ class RosterEntry {
     required this.initials,
     required this.colorSeed,
     this.id,
+    this.schoolId,
     this.qrToken,
     this.rfidUid,
     this.qrActive = true,
@@ -38,6 +39,7 @@ class RosterEntry {
   final String initials;
   final int colorSeed;
   final String? id; // Supabase students.id
+  final String? schoolId; // A4: audience checks for by_school events
   final String? qrToken;
   final String? rfidUid;
 
@@ -47,7 +49,7 @@ class RosterEntry {
 
   Map<String, dynamic> toJson() => {
         'id': id, 'name': name, 'studentNo': studentNo, 'course': course,
-        'initials': initials, 'colorSeed': colorSeed,
+        'initials': initials, 'colorSeed': colorSeed, 'schoolId': schoolId,
         'qrToken': qrToken, 'rfidUid': rfidUid,
         'qrActive': qrActive, 'qrExpiresAt': qrExpiresAt,
       };
@@ -55,6 +57,7 @@ class RosterEntry {
   static RosterEntry fromJson(Map<String, dynamic> j) => RosterEntry(
         id: j['id'], name: j['name'], studentNo: j['studentNo'],
         course: j['course'], initials: j['initials'], colorSeed: j['colorSeed'],
+        schoolId: j['schoolId'],
         qrToken: j['qrToken'], rfidUid: j['rfidUid'],
         qrActive: j['qrActive'] ?? true, qrExpiresAt: j['qrExpiresAt'],
       );
@@ -71,9 +74,19 @@ DateTime? rosterSyncedAt;
 /// dynamic passes are verified against it fully offline (A5).
 String? qrPublicKey;
 
+/// Device clock minus server clock, measured at the last roster download
+/// (Session 11 addition #2). Offline validation trusts the device clock,
+/// so a drift beyond [clockSkewWarnThreshold] shows a warning banner.
+int? clockSkewSeconds;
+const clockSkewWarnThreshold = 30;
+
+bool get clockSkewed =>
+    clockSkewSeconds != null && clockSkewSeconds!.abs() > clockSkewWarnThreshold;
+
 const _rosterKey = 'roster_cache_v1';
 const _rosterAtKey = 'roster_cache_at_v1';
 const _qrKeyKey = 'qr_public_key_v1';
+const _skewKey = 'clock_skew_v1';
 
 Future<void> persistRoster() async {
   final prefs = await SharedPreferences.getInstance();
@@ -81,11 +94,14 @@ Future<void> persistRoster() async {
   await prefs.setString(_rosterAtKey, (rosterSyncedAt ?? DateTime.now()).toIso8601String());
   final key = qrPublicKey;
   if (key != null) await prefs.setString(_qrKeyKey, key);
+  final skew = clockSkewSeconds;
+  if (skew != null) await prefs.setInt(_skewKey, skew);
 }
 
 Future<void> restoreRoster() async {
   final prefs = await SharedPreferences.getInstance();
   qrPublicKey ??= prefs.getString(_qrKeyKey);
+  clockSkewSeconds ??= prefs.getInt(_skewKey);
   final raw = prefs.getString(_rosterKey);
   if (raw == null) return;
   roster = (jsonDecode(raw) as List)
@@ -153,6 +169,7 @@ class PendingScan {
     required this.method,
     required this.scannedAt,
     required this.school,
+    this.sessionId,
     this.note,
     this.state = SyncState.queued,
   });
@@ -164,19 +181,23 @@ class PendingScan {
   final String method; // 'qr' | 'rfid' | 'manual'
   final String scannedAt; // ISO-8601, decides validity
   final String school;
+
+  /// A3: the session this scan belongs to. Null only for legacy events
+  /// without sessions — the server then resolves one from scanned_at.
+  final String? sessionId;
   final String? note;
   SyncState state;
 
   Map<String, dynamic> toJson() => {
         'clientId': clientId, 'eventId': eventId, 'studentId': studentId,
         'scanType': scanType, 'method': method, 'scannedAt': scannedAt,
-        'school': school, 'note': note,
+        'school': school, 'sessionId': sessionId, 'note': note,
       };
 
   static PendingScan fromJson(Map<String, dynamic> j) => PendingScan(
         clientId: j['clientId'], eventId: j['eventId'], studentId: j['studentId'],
         scanType: j['scanType'], method: j['method'], scannedAt: j['scannedAt'],
-        school: j['school'], note: j['note'],
+        school: j['school'], sessionId: j['sessionId'], note: j['note'],
       );
 }
 
@@ -199,17 +220,29 @@ class ScanSession extends ChangeNotifier {
   int queued = 0;
   int dupes = 0;
 
-  // Event context (set by events_screen before scanning starts).
+  // Event + session context (set by events_screen before scanning starts).
   String? eventId;
   String? eventName;
   String? windowLine;
 
+  /// A3: the checking session scans are recorded against. Null only for
+  /// legacy events without session rows (server resolves from scanned_at).
+  String? sessionId;
+  String? sessionLabel; // "Jul 21 · Opening Ceremony" — shown in the header
+
+  /// In-only sessions have no time-out — the toggle hides and timeIn locks.
+  bool inOnly = false;
+
+  /// A4 audience: school codes allowed at this event; null = all students.
+  List<String>? audienceSchools;
+
   /// When the checking window closes — scans after this are still accepted
-  /// but flagged for review locally (mirrors compute_scan_status).
+  /// but flagged for review locally (mirrors compute_scan_status, which
+  /// now works from the SESSION's window).
   DateTime? checkingClosesAt;
   String school = 'SOC';
   String deviceId = 'CHK-01';
-  final Set<String> _scannedIn = {}; // student ids seen this session (in)
+  final Set<String> _scannedIn = {}; // student ids seen this SESSION (in)
   final Set<String> _scannedOut = {};
   final List<PendingScan> queue = [];
 
@@ -226,26 +259,44 @@ class ScanSession extends ChangeNotifier {
   Future<void> startEvent({
     required String eventId,
     required String school,
+    String? sessionId,
+    String? sessionLabel,
+    bool inOnly = false,
+    List<String>? audienceSchools,
   }) async {
     this.eventId = eventId;
     this.school = school;
+    this.sessionId = sessionId;
+    this.sessionLabel = sessionLabel;
+    this.inOnly = inOnly;
+    this.audienceSchools = audienceSchools;
+    if (inOnly) timeIn = true;
     scanned = 0;
     dupes = 0;
     _scannedIn.clear();
     _scannedOut.clear();
     await _restoreQueue();
-    // Warm counters from what the server already has for this event.
+    // Warm the duplicate sets from what the server already has — scoped to
+    // this SESSION (A3: the unique rule is per session, so a morning
+    // check-in must not block the afternoon one).
     try {
-      final rows = List<Map<String, dynamic>>.from(await repo.client
+      var q = repo.client
           .from('attendance')
           .select('student_id, scan_type')
-          .eq('event_id', eventId));
-      for (final r in rows) {
+          .eq('event_id', eventId);
+      if (sessionId != null) q = q.eq('session_id', sessionId);
+      for (final r in List<Map<String, dynamic>>.from(await q)) {
         if (r['scan_type'] == 'in') _scannedIn.add(r['student_id'] as String);
         if (r['scan_type'] == 'out') _scannedOut.add(r['student_id'] as String);
       }
       scanned = _scannedIn.length;
     } catch (_) {/* offline start — counters warm up as we scan */}
+    // Queued offline scans for this session also count as "seen".
+    for (final p in queue) {
+      if (p.eventId != eventId) continue;
+      if (sessionId != null && p.sessionId != sessionId) continue;
+      (p.scanType == 'in' ? _scannedIn : _scannedOut).add(p.studentId);
+    }
     notifyListeners();
   }
 
@@ -256,6 +307,7 @@ class ScanSession extends ChangeNotifier {
   }
 
   void setTimeIn(bool v) {
+    if (inOnly && !v) return; // in-only sessions have no time-out
     timeIn = v;
     notifyListeners();
   }
@@ -382,6 +434,15 @@ class ScanSession extends ChangeNotifier {
       _feedback(null, ScanResult.unknown, method);
       return;
     }
+    // A4: by_school events only involve students of the selected schools.
+    // Refusing locally beats queueing a scan the server will reject.
+    final allowed = audienceSchools;
+    if (allowed != null && !allowed.contains(entry.schoolId)) {
+      _feedback(entry, ScanResult.rejected, method,
+          reason: 'Not part of this event’s audience '
+              '(${entry.schoolId ?? 'no school'} — event is for ${allowed.join('/')})');
+      return;
+    }
     final seen = timeIn ? _scannedIn : _scannedOut;
     if (seen.contains(entry.id)) {
       _feedback(entry, ScanResult.duplicate, method);
@@ -396,6 +457,7 @@ class ScanSession extends ChangeNotifier {
       method: method,
       scannedAt: DateTime.now().toUtc().toIso8601String(),
       school: school,
+      sessionId: sessionId,
       note: note,
     );
     queue.add(scan);
@@ -451,6 +513,7 @@ class ScanSession extends ChangeNotifier {
           'p_device': deviceId,
           'p_school': scan.school,
           'p_note': scan.note,
+          'p_session': scan.sessionId,
         });
         scan.state = SyncState.synced;
       } on PostgrestException catch (e) {

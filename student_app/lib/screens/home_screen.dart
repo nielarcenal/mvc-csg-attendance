@@ -23,6 +23,23 @@ class _HomeScreenState extends State<HomeScreen> {
   VoidCallback get onOpenId => widget.onOpenId;
   VoidCallback get onOpenCalendar => widget.onOpenCalendar;
 
+  // Repaint when the shell's silent auto-refresh lands new data (§C).
+  @override
+  void initState() {
+    super.initState();
+    repo.dataVersion.addListener(_onData);
+  }
+
+  void _onData() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    repo.dataVersion.removeListener(_onData);
+    super.dispose();
+  }
+
   static const _weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

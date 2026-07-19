@@ -28,19 +28,32 @@ const selectStyle = {
   background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--ink)',
 } as const;
 
+const dateStyle = {
+  padding: '6px 10px', borderRadius: 99, border: '1px solid var(--hairline)',
+  background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--ink)',
+} as const;
+
 export default function AuditLog() {
-  const { data: all, loading, error, retry } = useLoadedState(loadAudit, []);
+  const { data: all, loading, error, retry } = useLoadedState(loadAudit, [], [], { auto: true });
   const [actor, setActor] = useState('all');
   const [table, setTable] = useState('all');
   const [action, setAction] = useState('all');
+  const [from, setFrom] = useState(''); // YYYY-MM-DD (local)
+  const [to, setTo] = useState('');
 
   const actors = useMemo(() => [...new Set(all.map((r) => r.actor))].sort(), [all]);
   const tables = useMemo(() => [...new Set(all.map((r) => r.table))].sort(), [all]);
   const actions = useMemo(() => [...new Set(all.map((r) => r.action))].sort(), [all]);
-  const rows = all.filter((r) =>
-    (actor === 'all' || r.actor === actor)
-    && (table === 'all' || r.table === table)
-    && (action === 'all' || r.action === action));
+  const fromMs = from ? new Date(`${from}T00:00:00`).getTime() : null;
+  const toMs = to ? new Date(`${to}T23:59:59.999`).getTime() : null;
+  const rows = all.filter((r) => {
+    const at = new Date(r.createdAt).getTime();
+    return (actor === 'all' || r.actor === actor)
+      && (table === 'all' || r.table === table)
+      && (action === 'all' || r.action === action)
+      && (fromMs === null || at >= fromMs)
+      && (toMs === null || at <= toMs);
+  });
 
   return (
     <>
@@ -61,6 +74,14 @@ export default function AuditLog() {
               <option value="all">Action: All</option>
               {actions.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
+            <input type="date" style={dateStyle} value={from} max={to || undefined}
+              onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
+            <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700 }}>–</span>
+            <input type="date" style={dateStyle} value={to} min={from || undefined}
+              onChange={(e) => setTo(e.target.value)} aria-label="To date" />
+            <button className="pill-btn" style={{ padding: '7px 14px', fontSize: 11 }} onClick={retry}>
+              ↻ Refresh
+            </button>
           </>
         }
       />

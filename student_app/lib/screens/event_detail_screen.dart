@@ -19,6 +19,7 @@ class EventDetailScreen extends StatefulWidget {
 class _EventDetailScreenState extends State<EventDetailScreen> {
   bool? _going;
   int _headcount = 0;
+  List<repo.EventSessionInfo> _sessions = const [];
 
   EventItem get e => widget.event;
 
@@ -29,6 +30,13 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     repo.rsvpCount(e.id).then((n) {
       if (mounted && n != null) setState(() => _headcount = n);
     });
+    // Per-day schedule (FEATURE_BATCH_2 §C) — sessions from event_sessions.
+    final id = e.id;
+    if (id != null) {
+      repo.loadEventSessions(id).then((s) {
+        if (mounted) setState(() => _sessions = s);
+      }).catchError((_) {/* offline — the summary card still shows */});
+    }
   }
 
   Future<void> _setGoing(bool going) async {
@@ -124,6 +132,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ],
                   ),
                 ),
+                if (_sessions.isNotEmpty) ...[
+                  const SizedBox(height: 11),
+                  CampusCard(
+                    radius: 18,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SectionLabel('Schedule'),
+                        const SizedBox(height: 4),
+                        ..._scheduleRows(),
+                      ],
+                    ),
+                  ),
+                ],
                 if (!e.required) ...[
                   const SizedBox(height: 11),
                   CampusCard(
@@ -216,6 +239,61 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         ],
       ),
     );
+  }
+
+  /// Sessions grouped day by day: a date header whenever the day changes,
+  /// then each session's program, venue, mode and checking window.
+  List<Widget> _scheduleRows() {
+    final rows = <Widget>[];
+    String? day;
+    final multiDay = _sessions.map((s) => s.dayLabel).toSet().length > 1;
+    for (final s in _sessions) {
+      if (multiDay && s.dayLabel != day) {
+        day = s.dayLabel;
+        rows.add(Padding(
+          padding: const EdgeInsets.only(top: 9, bottom: 2),
+          child: Text(s.dayLabel.toUpperCase(),
+              style: T.sectionLabel(color: T.accentDeep, size: 10)),
+        ));
+      }
+      rows.add(Padding(
+        padding: const EdgeInsets.only(top: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: T.tint(T.student),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(s.inOnly ? Icons.login_rounded : Icons.sync_alt_rounded,
+                  size: 17, color: T.studentDeep),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(s.program.isEmpty ? 'Attendance check' : s.program,
+                      style: T.ui(12.5, weight: FontWeight.w700)),
+                  Text(
+                    [
+                      if (s.venue.isNotEmpty) s.venue,
+                      s.windowLine,
+                      s.inOnly ? 'check-in only' : 'check-in & out',
+                    ].join(' · '),
+                    style: T.ui(10.5, color: T.text2),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    return rows;
   }
 
   Widget _infoRow(Color tint, Color deep, IconData icon, String title, String sub,

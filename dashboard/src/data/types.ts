@@ -115,6 +115,7 @@ export interface AccountRow {
 
 export interface AuditRow {
   time: string;
+  createdAt: string; // ISO — drives the date-range filter
   actor: string;
   device?: string;
   action: string;

@@ -197,22 +197,34 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
                       style: T.ui(10.5, weight: FontWeight.w700,
                           color: Colors.white.withOpacity(.85))),
                   const SizedBox(height: 10),
-                  // Time-in / Time-out segmented toggle
-                  Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(.18),
-                      borderRadius: BorderRadius.circular(99),
+                  // Time-in / Time-out segmented toggle. In-only sessions
+                  // (A3/§D) have no time-out — the toggle disappears.
+                  if (s.inOnly)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(.18),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: Text('Check-in only session',
+                          style: T.ui(11, weight: FontWeight.w800, color: Colors.white)),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(.18),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _segment('Time-in', s.timeIn, () => s.setTimeIn(true)),
+                          const SizedBox(width: 4),
+                          _segment('Time-out', !s.timeIn, () => s.setTimeIn(false)),
+                        ],
+                      ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _segment('Time-in', s.timeIn, () => s.setTimeIn(true)),
-                        const SizedBox(width: 4),
-                        _segment('Time-out', !s.timeIn, () => s.setTimeIn(false)),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),

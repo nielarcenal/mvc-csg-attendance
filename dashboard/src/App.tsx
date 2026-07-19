@@ -11,6 +11,7 @@ import LiveAttendance from './pages/LiveAttendance';
 import ReviewQueue from './pages/ReviewQueue';
 import Accounts from './pages/Accounts';
 import BatchQr from './pages/BatchQr';
+import Reports from './pages/Reports';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
 
@@ -63,7 +64,8 @@ export default function App() {
             <Route path="/live" element={<LiveAttendance />} />
             <Route path="/review" element={<ReviewQueue />} />
             <Route path="/accounts" element={<Accounts />} />
-            <Route path="/reports" element={<BatchQr />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/qr" element={<BatchQr />} />
             <Route path="/audit" element={<SuperOnly><AuditLog /></SuperOnly>} />
             <Route path="/settings" element={<SuperOnly><Settings /></SuperOnly>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

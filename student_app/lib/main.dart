@@ -40,8 +40,12 @@ class _RootState extends State<_Root> {
     if (repo.hasBackend && repo.isSignedIn) {
       repo.refreshAll().then((_) {
         if (mounted) setState(() { _signedIn = true; _checking = false; });
-      }).catchError((_) {
-        if (mounted) setState(() => _checking = false);
+      }).catchError((_) async {
+        // Offline reopen: a stored session + cached identity still get to
+        // Home (screens show their last data / honest empty states, and
+        // the Digital ID shows the cached pass with its real expiry).
+        final restored = await repo.restoreStudentCache();
+        if (mounted) setState(() { _signedIn = restored; _checking = false; });
       });
     } else {
       _checking = false;

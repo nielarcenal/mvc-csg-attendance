@@ -10,7 +10,7 @@ const SCHOOL_BAR_STYLES = [
 ];
 
 export default function Dashboard() {
-  const { data: live, loading, error, retry } = useLoadedState(loadDashStats, null);
+  const { data: live, loading, error, retry } = useLoadedState(loadDashStats, null, [], { auto: true });
   const stats = [
     { label: 'SEMESTER ATTENDANCE', value: live?.avgRate != null ? `${live.avgRate}%` : '—', color: 'var(--checker-deep)' },
     { label: 'ACTIVE STUDENTS', value: live ? String(live.students) : '—' },
@@ -35,6 +35,9 @@ export default function Dashboard() {
         subtitle={live
           ? `1st Semester, S.Y. 2026–27 · ${live.events} event${live.events === 1 ? '' : 's'} so far`
           : '1st Semester, S.Y. 2026–27'}
+        actions={
+          <button className="pill-btn" style={{ padding: '8px 15px', fontSize: 11.5 }} onClick={retry}>↻ Refresh</button>
+        }
       />
       {error && !live && <LoadError retry={retry} what="dashboard stats" />}
       <div style={{ display: 'flex', gap: 12, padding: '2px 22px 0', flex: 'none' }}>
