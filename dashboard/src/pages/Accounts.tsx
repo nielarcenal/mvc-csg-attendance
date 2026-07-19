@@ -1,10 +1,11 @@
 import { FormEvent, ReactNode, useRef, useState } from 'react';
 import { PageHeader } from '../components/Shell';
 import { ConfirmDialog, LoadError, useEscape } from '../components/ConfirmDialog';
-import { AccountRow } from '../data/types';
+import { AccountRow, SCHOOLS } from '../data/types';
 import {
   useLoadedState, loadAccounts, provisionAccount, ProvisionInput,
   parseStudentsCsv, importStudents, resetPassword, resendInvite, setAccountActive,
+  downloadCsv, CSV_HEADER,
 } from '../data/api';
 
 const GRID = '1.9fr .9fr .8fr 1fr 1.1fr';
@@ -41,9 +42,16 @@ export default function Accounts() {
     const err = await importStudents(parsed);
     setNotice(err
       ? `Import failed: ${err}`
-      : `Imported ${parsed.length} students${errors.length ? ` (${errors.length} lines skipped)` : ''}`);
+      : `Imported ${parsed.length} students${errors.length ? ` — ${errors.length} line${errors.length === 1 ? '' : 's'} skipped (first: ${errors[0]})` : ''}`);
     setReload((n) => n + 1);
   };
+
+  // Header + one example row so nobody has to guess the new column order.
+  const downloadTemplate = () => downloadCsv(
+    'students-template.csv',
+    CSV_HEADER.split(','),
+    [['2026-00001', 'Juan Miguel', '', 'Dela Cruz', 'j.delacruz@mvc.edu.ph', 'SOC', 'BSIT', '3', 'A']],
+  );
 
   const doReset = async (email: string) => {
     setBusyEmail(email);
@@ -88,6 +96,14 @@ export default function Accounts() {
             />
             <button className="pill-btn primary" style={{ padding: '9px 20px' }} onClick={() => fileRef.current?.click()}>
               ↑ Import students CSV
+            </button>
+            <button
+              className="pill-btn ghost"
+              title={`Columns: ${CSV_HEADER}`}
+              style={{ padding: '9px 14px', fontSize: 11 }}
+              onClick={downloadTemplate}
+            >
+              CSV template
             </button>
           </>
         }
@@ -253,20 +269,31 @@ function ProvisionModal({ role, onClose, onDone }: {
   const [error, setError] = useState<string | null>(null);
   const [tempPw, setTempPw] = useState<string | null>(null);
   const [form, setForm] = useState({
-    full_name: '', email: '', mode: 'temp_password' as ProvisionInput['mode'],
-    student_no: '', course: '', year_level: '', section: '',
+    first_name: '', middle_name: '', last_name: '',
+    email: '', mode: 'temp_password' as ProvisionInput['mode'],
+    student_no: '', school_id: '', course: '', year_level: '', section: '',
   });
   const set = (k: string) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const displayName = [form.first_name, form.last_name].filter(Boolean).join(' ');
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (role === 'student' && !form.school_id) {
+      setError('School is required for students.');
+      return;
+    }
     setBusy(true);
     setError(null);
     const res = await provisionAccount({
-      full_name: form.full_name, email: form.email, role, mode: form.mode,
+      first_name: form.first_name.trim(),
+      middle_name: form.middle_name.trim() || null,
+      last_name: form.last_name.trim(),
+      email: form.email, role, mode: form.mode,
       ...(role === 'student' ? {
-        student_no: form.student_no, course: form.course,
+        student_no: form.student_no, school_id: form.school_id,
+        course: form.course,
         year_level: form.year_level ? Number(form.year_level) : undefined,
         section: form.section || undefined,
       } : {}),
@@ -286,7 +313,7 @@ function ProvisionModal({ role, onClose, onDone }: {
           <>
             <div className="display" style={{ fontSize: 17 }}>Account created</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 6, lineHeight: 1.5 }}>
-              Share this temporary password with <b>{form.full_name}</b>. They must change it on first login.
+              Share this temporary password with <b>{displayName || form.email}</b>. They must change it on first login.
             </div>
             <div style={{ marginTop: 12, background: 'var(--bg)', borderRadius: 12, padding: '13px 15px', fontWeight: 800, fontSize: 15, letterSpacing: 0.5, textAlign: 'center' }}>
               {tempPw}
@@ -298,9 +325,19 @@ function ProvisionModal({ role, onClose, onDone }: {
             <div className="display" style={{ fontSize: 17 }}>
               {role === 'student' ? 'Add student account' : 'Invite checker'}
             </div>
-            <div style={{ marginTop: 12 }}>
-              <div className="field-label">Full name (Last, First)</div>
-              <input className="input-box" style={input} required value={form.full_name} onChange={set('full_name')} placeholder="Dela Cruz, Juan Miguel" />
+            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr .9fr 1.1fr', gap: 10, marginTop: 12 }}>
+              <div>
+                <div className="field-label">First name</div>
+                <input className="input-box" style={input} required value={form.first_name} onChange={set('first_name')} placeholder="Juan Miguel" />
+              </div>
+              <div>
+                <div className="field-label">Middle (optional)</div>
+                <input className="input-box" style={input} value={form.middle_name} onChange={set('middle_name')} placeholder="—" />
+              </div>
+              <div>
+                <div className="field-label">Last name</div>
+                <input className="input-box" style={input} required value={form.last_name} onChange={set('last_name')} placeholder="Dela Cruz" />
+              </div>
             </div>
             <div style={{ marginTop: 10 }}>
               <div className="field-label">School email</div>
@@ -313,7 +350,14 @@ function ProvisionModal({ role, onClose, onDone }: {
                   <input className="input-box" style={input} required value={form.student_no} onChange={set('student_no')} placeholder="2023-01417" />
                 </div>
                 <div>
-                  <div className="field-label">Course</div>
+                  <div className="field-label">School</div>
+                  <select className="input-box" style={input} required value={form.school_id} onChange={set('school_id')}>
+                    <option value="">Select school…</option>
+                    {SCHOOLS.map((s) => <option key={s.code} value={s.code}>{s.code} · {s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div className="field-label">Course (optional)</div>
                   <input className="input-box" style={input} value={form.course} onChange={set('course')} placeholder="BSIT" />
                 </div>
                 <div>

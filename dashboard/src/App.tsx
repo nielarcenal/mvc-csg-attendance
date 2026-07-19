@@ -59,6 +59,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/events" element={<Events />} />
             <Route path="/events/new" element={<EventCreate />} />
+            <Route path="/events/:id/edit" element={<EventCreate />} />
             <Route path="/live" element={<LiveAttendance />} />
             <Route path="/review" element={<ReviewQueue />} />
             <Route path="/accounts" element={<Accounts />} />

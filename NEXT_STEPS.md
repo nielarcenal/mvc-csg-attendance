@@ -19,16 +19,21 @@ conversation). Applied to the live project and verified:
 - students.school_id / first+last names / attendance.session_id /
   events.start_date+end_date are NOT NULL on live.
 
-## Session 9 — Event maker UI (NOT STARTED)
-Event duration/sessions/audience editor, delete/archive with confirmations,
-all confirmation dialogs (FEATURE_BATCH_2 §B), header logo nav + modal
-barrier, School column/filters (relabel from Course), sortable tables with
-URL-reflected sort, admin edit student, CSV import new column format
-(student_no, first_name, middle_name, last_name, email, school, course,
-year_level, section).
-Accept: create a 1-week event with 2 sessions on day 1; edit and delete flows
-confirm properly; logo click does nothing while a dialog is open; students
-sort by school/year/course/name and survive refresh.
+## Session 9 — Event maker UI (9a DONE 2026-07-19; 9b remaining)
+**9a done:** event create/edit with duration selector (1 day / 1 week /
+custom), per-day session editor (program, venue, mode, open/close, add/
+remove), audience selector (all students / by school), Edit button + route
+on the events list, CSV import in the new column format (with validation,
+skip reporting and a downloadable template), Add-student form with name
+parts + required School. Verified in a real browser against live Supabase
+(1-week event, 2 sessions on day 1, by-school SOC+SOE, edit round-trip,
+CSV import with a bad-school row skipped); test fixtures cleaned up.
+**9b remaining:** delete/archive flows with confirmations, header logo nav +
+modal barrier above it, School column/filters on Accounts (relabel from
+Course), sortable tables with URL-reflected sort, admin edit student.
+Accept (9b): delete/archive confirm properly; logo click does nothing while
+a dialog is open; students sort by school/year/course/name, surviving
+refresh.
 
 ## Session 10 — QR v2 (NOT STARTED)
 `issue_qr_pass` edge function + ed25519 keys in secrets, student Generate

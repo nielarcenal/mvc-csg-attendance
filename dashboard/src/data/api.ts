@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { supabase, hasBackend } from '../lib/supabase';
 import {
-  EventRow, LiveRow, ReviewItem, AccountRow, AuditRow, Method,
+  EventRow, LiveRow, ReviewItem, AccountRow, AuditRow, Method, SCHOOLS,
 } from './types';
 
 export { hasBackend };
@@ -109,29 +109,168 @@ export async function loadEvents(): Promise<EventRow[] | null> {
   });
 }
 
+// FEATURE_BATCH_2 A3/A4: events carry a duration + per-day checking
+// sessions and an audience (all students or selected schools).
+export type DurationType = 'single_day' | 'one_week' | 'custom';
+export type SessionMode = 'in_out' | 'in_only';
+
+export interface SessionInput {
+  id?: string;                // set when editing an existing session
+  session_date: string;       // YYYY-MM-DD
+  program: string;
+  venue: string;
+  mode: SessionMode;
+  checking_opens_at: string;  // ISO
+  checking_closes_at: string; // ISO
+  sort_order: number;
+}
+
 export interface NewEventInput {
   name: string; venue: string; description: string;
-  starts_at: string; ends_at: string;
-  checking_opens_at: string; checking_closes_at: string;
-  is_required: boolean; requires_time_out: boolean; fine_amount: number;
+  duration_type: DurationType;
+  start_date: string; end_date: string;
+  is_required: boolean; fine_amount: number;
   minimum_stay_minutes?: number;
+  audience_type: 'all_students' | 'by_school';
+  school_codes: string[];     // when by_school
   checkers: { profile_id: string; school: string }[];
+  sessions: SessionInput[];   // at least one
+}
+
+// The legacy event-level columns are derived from the sessions: the overall
+// range spans them and requires_time_out is true when any session is in/out.
+function eventColumns(input: NewEventInput) {
+  const opens = input.sessions.map((s) => s.checking_opens_at).sort();
+  const closes = input.sessions.map((s) => s.checking_closes_at).sort();
+  return {
+    name: input.name, venue: input.venue, description: input.description,
+    duration_type: input.duration_type,
+    start_date: input.start_date, end_date: input.end_date,
+    audience_type: input.audience_type,
+    starts_at: opens[0], ends_at: closes[closes.length - 1],
+    checking_opens_at: opens[0], checking_closes_at: closes[closes.length - 1],
+    is_required: input.is_required,
+    requires_time_out: input.sessions.some((s) => s.mode === 'in_out'),
+    minimum_stay_minutes: input.minimum_stay_minutes ?? null,
+    fine_amount: input.fine_amount,
+  };
 }
 
 export async function createEvent(input: NewEventInput): Promise<string | null> {
   if (!supabase) return 'Backend not configured';
   const { data: session } = await supabase.auth.getUser();
-  const { checkers, ...event } = input;
   const { data, error } = await supabase.from('events')
-    .insert({ ...event, created_by: session.user?.id })
+    .insert({ ...eventColumns(input), created_by: session.user?.id })
     .select('id').single();
   if (error) return error.message;
-  if (checkers.length) {
-    const { error: cErr } = await supabase.from('event_checkers')
-      .insert(checkers.map((c) => ({ ...c, event_id: data.id })));
-    if (cErr) return cErr.message;
+  return writeEventChildren(data.id, input, { replace: false });
+}
+
+export async function updateEvent(id: string, input: NewEventInput): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+  const { error } = await supabase.from('events').update(eventColumns(input)).eq('id', id);
+  if (error) return error.message;
+  return writeEventChildren(id, input, { replace: true });
+}
+
+async function writeEventChildren(
+  eventId: string, input: NewEventInput, { replace }: { replace: boolean },
+): Promise<string | null> {
+  if (!supabase) return 'Backend not configured';
+
+  // Sessions: upsert the kept ones, delete the removed ones. A session that
+  // already has attendance refuses deletion (FK) — surfaced as the error.
+  if (replace) {
+    const keptIds = input.sessions.map((s) => s.id).filter(Boolean) as string[];
+    let del = supabase.from('event_sessions').delete().eq('event_id', eventId);
+    if (keptIds.length) del = del.not('id', 'in', `(${keptIds.join(',')})`);
+    const { error } = await del;
+    if (error) {
+      return error.code === '23503'
+        ? 'A removed session already has attendance scans — it can’t be deleted.'
+        : error.message;
+    }
+  }
+  // PostgREST bulk writes need identical keys on every row, so existing
+  // sessions (with id) and new ones (without) go in separate calls.
+  const sessionRow = (s: SessionInput) => ({
+    event_id: eventId, session_date: s.session_date,
+    program: s.program.trim() || null, venue: s.venue.trim() || null,
+    mode: s.mode, checking_opens_at: s.checking_opens_at,
+    checking_closes_at: s.checking_closes_at, sort_order: s.sort_order,
+  });
+  const existing = input.sessions.filter((s) => s.id);
+  const fresh = input.sessions.filter((s) => !s.id);
+  if (existing.length) {
+    const { error } = await supabase.from('event_sessions').upsert(
+      existing.map((s) => ({ id: s.id, ...sessionRow(s) })), { onConflict: 'id' });
+    if (error) return error.message;
+  }
+  if (fresh.length) {
+    const { error } = await supabase.from('event_sessions').insert(fresh.map(sessionRow));
+    if (error) return error.message;
+  }
+
+  // Audience schools (A4): simple replace.
+  if (replace) {
+    const { error } = await supabase.from('event_schools').delete().eq('event_id', eventId);
+    if (error) return error.message;
+  }
+  if (input.audience_type === 'by_school' && input.school_codes.length) {
+    const { error } = await supabase.from('event_schools')
+      .insert(input.school_codes.map((code) => ({ event_id: eventId, school_code: code })));
+    if (error) return error.message;
+  }
+
+  if (replace) {
+    const { error } = await supabase.from('event_checkers').delete().eq('event_id', eventId);
+    if (error) return error.message;
+  }
+  if (input.checkers.length) {
+    const { error } = await supabase.from('event_checkers')
+      .insert(input.checkers.map((c) => ({ ...c, event_id: eventId })));
+    if (error) return error.message;
   }
   return null;
+}
+
+export interface EventForEdit {
+  input: NewEventInput;
+  checkerNames: Record<string, string>; // profile_id → display name
+}
+
+export async function loadEventForEdit(id: string): Promise<EventForEdit | null> {
+  if (!supabase) return null;
+  const [{ data: ev, error }, { data: sessions }, { data: schools }, { data: checkers }] =
+    await Promise.all([
+      supabase.from('events').select('*').eq('id', id).single(),
+      supabase.from('event_sessions').select('*').eq('event_id', id)
+        .order('session_date').order('sort_order'),
+      supabase.from('event_schools').select('school_code').eq('event_id', id),
+      supabase.from('event_checkers').select('profile_id, school, profiles(full_name)').eq('event_id', id),
+    ]);
+  if (error || !ev) return null;
+  return {
+    input: {
+      name: ev.name, venue: ev.venue ?? '', description: ev.description ?? '',
+      duration_type: ev.duration_type ?? 'single_day',
+      start_date: ev.start_date, end_date: ev.end_date,
+      is_required: ev.is_required,
+      fine_amount: Number(ev.fine_amount ?? 0),
+      minimum_stay_minutes: ev.minimum_stay_minutes ?? undefined,
+      audience_type: ev.audience_type ?? 'all_students',
+      school_codes: (schools ?? []).map((s: any) => s.school_code),
+      checkers: (checkers ?? []).map((c: any) => ({ profile_id: c.profile_id, school: c.school })),
+      sessions: (sessions ?? []).map((s: any) => ({
+        id: s.id, session_date: s.session_date,
+        program: s.program ?? '', venue: s.venue ?? '',
+        mode: s.mode, checking_opens_at: s.checking_opens_at,
+        checking_closes_at: s.checking_closes_at, sort_order: s.sort_order,
+      })),
+    },
+    checkerNames: Object.fromEntries(
+      (checkers ?? []).map((c: any) => [c.profile_id, c.profiles?.full_name ?? '—'])),
+  };
 }
 
 export async function loadCheckerProfiles(): Promise<{ id: string; full_name: string }[] | null> {
@@ -343,9 +482,11 @@ export async function loadAccounts(): Promise<AccountRow[] | null> {
 }
 
 export interface ProvisionInput {
-  full_name: string; email: string; role: 'student' | 'checker' | 'event_maker';
+  first_name: string; middle_name?: string | null; last_name: string;
+  email: string; role: 'student' | 'checker' | 'event_maker';
   mode: 'invite' | 'temp_password';
-  student_no?: string; course?: string; year_level?: number; section?: string;
+  student_no?: string; school_id?: string;
+  course?: string; year_level?: number; section?: string;
 }
 
 export async function provisionAccount(input: ProvisionInput):
@@ -376,9 +517,25 @@ export const setAccountActive = (email: string, active: boolean) =>
   accountAction({ action: 'set_active', email, active });
 
 // ── CSV roster import (spec: student_no, name, email, course, year, section)
+// FEATURE_BATCH_2 A1/A2 format:
+// student_no, first_name, middle_name, last_name, email, school, course,
+// year_level, section — middle_name may be empty; school is required
+// (code like SOC, or the full school name).
+export const CSV_HEADER =
+  'student_no,first_name,middle_name,last_name,email,school,course,year_level,section';
+
 export interface CsvStudent {
-  student_no: string; full_name: string; email: string | null;
+  student_no: string; first_name: string; middle_name: string | null;
+  last_name: string; email: string | null; school_id: string;
   course: string | null; year_level: number | null; section: string | null;
+}
+
+function schoolCodeOf(cell: string): string | null {
+  const v = cell.trim();
+  const byCode = SCHOOLS.find((s) => s.code.toLowerCase() === v.toLowerCase());
+  if (byCode) return byCode.code;
+  const byName = SCHOOLS.find((s) => s.name.toLowerCase() === v.toLowerCase());
+  return byName ? byName.code : null;
 }
 
 export function parseStudentsCsv(text: string): { rows: CsvStudent[]; errors: string[] } {
@@ -388,20 +545,40 @@ export function parseStudentsCsv(text: string): { rows: CsvStudent[]; errors: st
   // Header row is optional; detect it by a non-numeric first field.
   const first = lines[0].toLowerCase();
   const hasHeader = first.includes('student') || first.includes('name');
+  if (hasHeader && !first.includes('first')) {
+    return {
+      rows: [],
+      errors: [`old CSV format — the columns are now: ${CSV_HEADER}`],
+    };
+  }
   const rows: CsvStudent[] = [];
   for (const [i, line] of lines.slice(hasHeader ? 1 : 0).entries()) {
+    const n = i + 1 + (hasHeader ? 1 : 0);
     const cells = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-    if (cells.length < 2 || !cells[0]) {
-      errors.push(`line ${i + 1 + (hasHeader ? 1 : 0)}: needs at least student_no, name`);
+    if (cells.length < 6 || !cells[0]) {
+      errors.push(`line ${n}: expected columns ${CSV_HEADER}`);
+      continue;
+    }
+    const [studentNo, firstName, middleName, lastName, email, school] = cells;
+    if (!firstName || !lastName) {
+      errors.push(`line ${n}: first_name and last_name are required (middle_name may be empty)`);
+      continue;
+    }
+    const schoolCode = schoolCodeOf(school);
+    if (!schoolCode) {
+      errors.push(`line ${n}: unknown school “${school}” — use a code like ${SCHOOLS.map((s) => s.code).join('/')}`);
       continue;
     }
     rows.push({
-      student_no: cells[0],
-      full_name: cells[1],
-      email: cells[2] || null,
-      course: cells[3] || null,
-      year_level: cells[4] ? Number(cells[4]) || null : null,
-      section: cells[5] || null,
+      student_no: studentNo,
+      first_name: firstName,
+      middle_name: middleName || null,
+      last_name: lastName,
+      email: email || null,
+      school_id: schoolCode,
+      course: cells[6] || null,
+      year_level: cells[7] ? Number(cells[7]) || null : null,
+      section: cells[8] || null,
     });
   }
   return { rows, errors };

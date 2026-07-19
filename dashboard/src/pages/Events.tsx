@@ -86,7 +86,7 @@ export default function Events() {
         </div>
       )}
       <div className="card" style={{ margin: '12px 22px 18px', overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <div className="table-head" style={{ display: 'grid', gridTemplateColumns: '1.7fr .9fr 1fr .8fr 1.1fr .8fr .4fr', gap: 8, padding: '11px 18px' }}>
+        <div className="table-head" style={{ display: 'grid', gridTemplateColumns: '1.7fr .85fr 1fr .75fr 1fr .75fr .75fr', gap: 8, padding: '11px 18px' }}>
           <div>EVENT</div><div>DATE</div><div>CHECK-IN WINDOW</div><div>CHECKERS</div><div>ATTENDANCE</div><div>STATUS</div><div />
         </div>
         {rows.map((e) => (
@@ -94,7 +94,7 @@ export default function Events() {
             key={e.id}
             className="table-row"
             style={{
-              display: 'grid', gridTemplateColumns: '1.7fr .9fr 1fr .8fr 1.1fr .8fr .4fr', gap: 8,
+              display: 'grid', gridTemplateColumns: '1.7fr .85fr 1fr .75fr 1fr .75fr .75fr', gap: 8,
               padding: '11px 18px', cursor: e.status === 'live' ? 'pointer' : 'default',
               background: e.status === 'live' ? 'rgba(53,164,99,.05)' : undefined,
             }}
@@ -127,8 +127,15 @@ export default function Events() {
               <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>—</div>
             )}
             <div><span className={STATUS_CHIP[e.status].cls}>{STATUS_CHIP[e.status].label}</span></div>
-            <div>
-              {e.status === 'closed' && e.required ? (
+            <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button
+                className="pill-btn"
+                style={{ border: '1.5px solid var(--hairline)', color: 'var(--text-2)', padding: '3px 9px', fontSize: 9.5, fontWeight: 700 }}
+                onClick={(ev) => { ev.stopPropagation(); navigate(`/events/${e.id}/edit`); }}
+              >
+                Edit
+              </button>
+              {e.status === 'closed' && e.required && (
                 <button
                   className="pill-btn"
                   disabled={busyId === e.id}
@@ -137,8 +144,6 @@ export default function Events() {
                 >
                   {busyId === e.id ? '…' : 'Generate fines'}
                 </button>
-              ) : (
-                <span style={{ color: 'var(--muted)', fontWeight: 800 }}>⋯</span>
               )}
             </div>
           </div>
